@@ -96,7 +96,10 @@ const PluginsPage: React.FC = () => {
     <div className="flex-1 min-h-full flex flex-col p-4 sm:p-6 md:p-8 animate-in fade-in duration-500">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-white">插件管理</h1>
+          <h1 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
+            <Puzzle size={28} className="text-primary-600 md:w-8 md:h-8" />
+            插件管理
+          </h1>
           <p className="text-sm md:text-base text-slate-500 dark:text-slate-400 mt-1">管理系统的扩展功能插件</p>
         </div>
         <div className="flex gap-3">
