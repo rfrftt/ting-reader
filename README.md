@@ -106,8 +106,10 @@ services:
     restart: unless-stopped
     environment:
       - RUST_LOG=info
-      - TING_HOST=0.0.0.0
-      - TING_PORT=3000
+      - TING_SERVER__HOST=0.0.0.0
+      - TING_SERVER__PORT=3000
+      # 建议修改 JWT 密钥，增强安全性
+      - TING_SECURITY__JWT_SECRET=change_me_in_prod
 ```
 
 启动容器：

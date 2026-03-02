@@ -205,8 +205,9 @@ impl ApiServer {
         
         // Static file serving for SPA
         let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "static".to_string());
+        let index_path = std::path::PathBuf::from(&static_dir).join("index.html");
         let serve_dir = ServeDir::new(&static_dir)
-            .not_found_service(ServeFile::new(format!("{}/index.html", static_dir)));
+            .fallback(ServeFile::new(index_path));
 
         // Apply global middleware layers
         let router = api_router
