@@ -123,7 +123,7 @@ jobs:
       - name: Build FPK (Beta)
         if: steps.filter.outputs.fpk == 'true'
         run: |
-          sed -i "s/^version[[:space:]]*=.*/version = ${{ env.VERSION }}-beta/" .github/ting-reader-fpk/manifest
+          sed -i "s/^version[[:space:]]*=.*/version = beta/" .github/ting-reader-fpk/manifest
           fnpack build --directory .github/ting-reader-fpk
           mv ting-reader.fpk ting-reader-beta.fpk
 
