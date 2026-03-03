@@ -1,6 +1,7 @@
 name: Docker Build, Push and FPK Release
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -70,15 +71,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up QEMU for multi-arch
-        if: steps.filter.outputs.docker == 'true' || steps.filter.outputs.version == 'true' || steps.check_release.outputs.exists != 'true'
+        if: steps.check_release.outputs.exists != 'true' || github.event_name == 'workflow_dispatch'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        if: steps.filter.outputs.docker == 'true' || steps.filter.outputs.version == 'true' || steps.check_release.outputs.exists != 'true'
+        if: steps.check_release.outputs.exists != 'true' || github.event_name == 'workflow_dispatch'
         uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
-        if: github.event_name != 'pull_request' && (steps.filter.outputs.docker == 'true' || steps.filter.outputs.version == 'true' || steps.check_release.outputs.exists != 'true')
+        if: github.event_name != 'pull_request' && (steps.check_release.outputs.exists != 'true' || github.event_name == 'workflow_dispatch')
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -86,7 +87,7 @@ jobs:
 
       - name: Determine Docker tags
         id: docker_tags
-        if: steps.filter.outputs.docker == 'true' || steps.filter.outputs.version == 'true' || steps.check_release.outputs.exists != 'true'
+        if: steps.check_release.outputs.exists != 'true' || github.event_name == 'workflow_dispatch'
         run: |
           if [ "${{ steps.check_release.outputs.exists }}" = "false" ]; then
             echo "tags<<EOF" >> $GITHUB_OUTPUT
@@ -98,7 +99,7 @@ jobs:
           fi
 
       - name: Build and push Docker image
-        if: steps.filter.outputs.docker == 'true' || steps.filter.outputs.version == 'true' || steps.check_release.outputs.exists != 'true'
+        if: steps.check_release.outputs.exists != 'true' || github.event_name == 'workflow_dispatch'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -110,25 +111,25 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Prepare fnpack
-        if: steps.filter.outputs.fpk == 'true' || steps.filter.outputs.version == 'true' || steps.check_release.outputs.exists != 'true'
+        if: steps.check_release.outputs.exists != 'true'
         run: |
           chmod +x .github/workflows/fnpack
           sudo mv .github/workflows/fnpack /usr/local/bin/fnpack
 
       - name: Update FPK configuration
-        if: steps.filter.outputs.fpk == 'true' || steps.filter.outputs.version == 'true' || steps.check_release.outputs.exists != 'true'
+        if: steps.check_release.outputs.exists != 'true'
         run: |
           sed -i "s/^version[[:space:]]*=.*/version = ${{ env.VERSION }}/" .github/ting-reader-fpk/manifest
 
       - name: Build FPK
-        if: steps.filter.outputs.fpk == 'true' || steps.filter.outputs.version == 'true' || steps.check_release.outputs.exists != 'true'
+        if: steps.check_release.outputs.exists != 'true'
         run: |
           fnpack build --directory .github/ting-reader-fpk
           mv ting-reader.fpk ting-reader-${{ env.VERSION }}.fpk
 
       - name: Extract Release Notes
         id: extract_notes
-        if: github.ref == 'refs/heads/main' && (steps.filter.outputs.code == 'true' || steps.filter.outputs.fpk == 'true' || steps.check_release.outputs.exists != 'true')
+        if: github.ref == 'refs/heads/main' && steps.check_release.outputs.exists != 'true'
         run: |
           VERSION="${{ env.VERSION }}"
           START_LINE=$(grep -n "## \[$VERSION\]" CHANGELOG.md | cut -d: -f1)
@@ -141,7 +142,7 @@ jobs:
           fi
 
       - name: Update Git Tag
-        if: github.ref == 'refs/heads/main' && steps.filter.outputs.code == 'true'
+        if: github.ref == 'refs/heads/main' && steps.check_release.outputs.exists != 'true'
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
@@ -150,7 +151,7 @@ jobs:
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
-        if: github.ref == 'refs/heads/main' && (steps.filter.outputs.code == 'true' || steps.filter.outputs.fpk == 'true' || steps.check_release.outputs.exists != 'true')
+        if: github.ref == 'refs/heads/main' && steps.check_release.outputs.exists != 'true'
         with:
           tag_name: v${{ env.VERSION }}
           name: Release v${{ env.VERSION }}
