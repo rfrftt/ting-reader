@@ -21,8 +21,12 @@ use base64::Engine;
 /// Handler for POST /api/cache/:chapterId - Cache a chapter
 pub async fn cache_chapter(
     State(state): State<AppState>,
+    user: crate::auth::middleware::AuthUser,
     Path(chapter_id): Path<String>,
 ) -> Result<impl IntoResponse> {
+    if user.role != "admin" {
+        return Err(TingError::PermissionDenied("Admin access required".to_string()));
+    }
     
     // Get chapter from database
     let chapter = state.chapter_repo.find_by_id(&chapter_id).await?
@@ -100,7 +104,11 @@ pub async fn cache_chapter(
 /// Handler for GET /api/cache - Get cache list
 pub async fn get_cache_list(
     State(state): State<AppState>,
+    user: crate::auth::middleware::AuthUser,
 ) -> Result<impl IntoResponse> {
+    if user.role != "admin" {
+        return Err(TingError::PermissionDenied("Admin access required".to_string()));
+    }
     
     let cached_chapters = state.cache_manager.list_cached().await
         .map_err(|e| TingError::IoError(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to list caches: {}", e))))?;
@@ -155,8 +163,12 @@ pub async fn get_cache_list(
 /// Handler for DELETE /api/cache/:chapterId - Delete a chapter cache
 pub async fn delete_chapter_cache(
     State(state): State<AppState>,
+    user: crate::auth::middleware::AuthUser,
     Path(chapter_id): Path<String>,
 ) -> Result<impl IntoResponse> {
+    if user.role != "admin" {
+        return Err(TingError::PermissionDenied("Admin access required".to_string()));
+    }
     
     state.cache_manager.delete_cache(&chapter_id).await
         .map_err(|e| match e {
@@ -174,7 +186,11 @@ pub async fn delete_chapter_cache(
 /// Handler for DELETE /api/cache - Clear all caches
 pub async fn clear_all_caches(
     State(state): State<AppState>,
+    user: crate::auth::middleware::AuthUser,
 ) -> Result<impl IntoResponse> {
+    if user.role != "admin" {
+        return Err(TingError::PermissionDenied("Admin access required".to_string()));
+    }
     
     let deleted_count = state.cache_manager.clear_all().await
         .map_err(|e| TingError::IoError(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to clear caches: {}", e))))?;
@@ -260,6 +276,7 @@ pub async fn stream_chapter(
 
     // Auto Preload / Cache Logic
     if let Some(user) = user {
+        // Auto-preload and auto-cache are available for all users
         if let Ok(Some(settings)) = state.settings_repo.get_by_user(&user.id).await {
             let settings_val = settings.settings_json.as_ref()
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());

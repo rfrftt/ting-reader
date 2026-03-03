@@ -21,8 +21,13 @@ use super::AppState;
 /// Handler for GET /api/v1/tasks - List all tasks
 pub async fn list_tasks(
     State(state): State<AppState>,
+    user: crate::auth::middleware::AuthUser,
     Query(query): Query<TasksQuery>,
 ) -> Result<impl IntoResponse> {
+    if user.role != "admin" {
+        return Err(TingError::PermissionDenied("Admin access required".to_string()));
+    }
+
     let (task_records, _total) = state
         .task_queue
         .list_tasks_with_filters(
@@ -57,8 +62,13 @@ pub async fn list_tasks(
 /// Handler for GET /api/v1/tasks/:id - Get task details
 pub async fn get_task(
     State(state): State<AppState>,
+    user: crate::auth::middleware::AuthUser,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse> {
+    if user.role != "admin" {
+        return Err(TingError::PermissionDenied("Admin access required".to_string()));
+    }
+
     let task_record = state.task_queue.get_task(&id).await?;
 
     let payload = if let Some(ref payload_str) = task_record.payload {
@@ -94,8 +104,13 @@ pub async fn get_task(
 /// Handler for POST /api/v1/tasks/:id/cancel - Cancel a task
 pub async fn cancel_task(
     State(state): State<AppState>,
+    user: crate::auth::middleware::AuthUser,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse> {
+    if user.role != "admin" {
+        return Err(TingError::PermissionDenied("Admin access required".to_string()));
+    }
+
     state.task_queue.cancel(&id).await?;
 
     Ok(Json(CancelTaskResponse {

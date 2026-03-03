@@ -242,8 +242,17 @@ pub async fn update_user_settings(
     if let Some(auto_cache) = req.auto_cache {
         settings_obj["autoCache"] = serde_json::json!(auto_cache);
     }
-    if let Some(widget_css) = &req.widget_css {
-        settings_obj["widgetCss"] = serde_json::json!(widget_css);
+    
+    // Restricted settings (admin only)
+    if user.role == "admin" {
+        if let Some(widget_css) = &req.widget_css {
+            settings_obj["widgetCss"] = serde_json::json!(widget_css);
+        }
+    } else {
+        // If non-admin tries to update these, we silently ignore them or log a warning
+        if req.widget_css.is_some() {
+            tracing::warn!(user_id = %user.id, "Non-admin user attempted to update restricted settings");
+        }
     }
 
     for (k, v) in req.extra {
