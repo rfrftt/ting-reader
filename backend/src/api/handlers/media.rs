@@ -828,6 +828,21 @@ pub async fn stream_chapter(
         let final_stream = futures::stream::iter(stream_chain).flatten();
         let body = Body::from_stream(final_stream);
 
+        // If no range header was requested, return 200 OK with chunked encoding (no Content-Length)
+        // This avoids "unexpected end of stream" errors if our logic_size prediction is slightly off (e.g. padding)
+        if range_header.is_none() {
+             return Ok((
+                StatusCode::OK,
+                [
+                    (header::CONTENT_TYPE, mime_type.to_string()),
+                    (header::ACCEPT_RANGES, "bytes".to_string()),
+                    (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
+                    ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
+                ],
+                body,
+            ).into_response());
+        }
+
         return Ok((
             StatusCode::PARTIAL_CONTENT,
             [
