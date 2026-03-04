@@ -48,7 +48,13 @@ jobs:
       - name: Prepare App Directory
         run: |
           mkdir -p .github/ting-reader-fpk-native/app/server
-          find backend/target -name ting-reader -type f -exec cp {} .github/ting-reader-fpk-native/app/server/ \;
+          echo "Listing target directory:"
+          ls -R backend/target
+          find backend/target -type f -name ting-reader -exec cp {} .github/ting-reader-fpk-native/app/server/ \;
+          if [ ! -f .github/ting-reader-fpk-native/app/server/ting-reader ]; then
+            echo "Error: ting-reader binary not found in target directory!"
+            exit 1
+          fi
           cp backend/config.toml .github/ting-reader-fpk-native/app/server/
           cp -r frontend/dist .github/ting-reader-fpk-native/app/server/static
           chmod +x .github/ting-reader-fpk-native/app/server/ting-reader
