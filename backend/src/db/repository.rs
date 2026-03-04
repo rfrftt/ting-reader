@@ -594,7 +594,7 @@ impl ChapterRepository {
         self.db.execute(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, book_id, title, path, duration, chapter_index, is_extra, hash, created_at, manual_corrected \
-                 FROM chapters WHERE book_id = ? ORDER BY chapter_index ASC"
+                 FROM chapters WHERE book_id = ? ORDER BY is_extra ASC, chapter_index ASC"
             ).map_err(TingError::DatabaseError)?;
             
             let chapters = stmt.query_map([&book_id], |row| {

@@ -760,6 +760,9 @@ impl LibraryScanner {
         }
 
         // Create chapters
+        let mut main_counter = 0;
+        let mut extra_counter = 0;
+
         for (index, file_url) in file_urls.iter().enumerate() {
             // Decode filename for title
             let decoded_file_url = self.decode_url_path(file_url);
@@ -783,13 +786,21 @@ impl LibraryScanner {
             // Clean Title
             let (final_title, is_extra) = self.text_cleaner.clean_chapter_title(&raw_title, book.title.as_deref());
             
+            let chapter_idx = if is_extra {
+                 extra_counter += 1;
+                 extra_counter
+            } else {
+                 main_counter += 1;
+                 main_counter
+            };
+
             let chapter = crate::db::models::Chapter {
                 id: Uuid::new_v4().to_string(),
                 book_id: book_id.clone(),
                 title: Some(final_title),
                 path: file_url.clone(),
                 duration: Some(meta_duration),
-                chapter_index: Some((index + 1) as i32),
+                chapter_index: Some(chapter_idx),
                 is_extra: if is_extra { 1 } else { 0 },
                 hash: Some(ch_hash.clone()),
                 created_at: chrono::Utc::now().to_rfc3339(),
@@ -1292,6 +1303,9 @@ impl LibraryScanner {
             chapter_map.insert(p, ch);
         }
 
+        let mut main_counter = 0;
+        let mut extra_counter = 0;
+
         for (index, file_path) in files.iter().enumerate() {
             if index % 5 == 0 {
                 // Check cancellation and log progress
@@ -1324,8 +1338,30 @@ impl LibraryScanner {
                 if !is_modified {
                     // Update index if needed (e.g. reordering files), but skip hashing/metadata
                     // Also respect manual_corrected if we were to update anything else
-                    let new_index = (index + 1) as i32;
-                    if ch.chapter_index != Some(new_index) {
+                    
+                    let is_extra_ch = ch.is_extra == 1;
+                    let mut idx_from_counter = if is_extra_ch {
+                         extra_counter += 1;
+                         extra_counter
+                    } else {
+                         main_counter += 1;
+                         main_counter
+                    };
+                    
+                    // Apply regex if exists to override index
+                    if let Some(re) = &chapter_regex {
+                        if let Some(filename) = file_path.file_stem().and_then(|s| s.to_str()) {
+                            if let Some(caps) = re.captures(filename) {
+                                if let Some(m) = caps.get(1) {
+                                    if let Ok(idx) = m.as_str().parse::<i32>() {
+                                        idx_from_counter = idx;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if ch.chapter_index != Some(idx_from_counter) {
                          // Only update index
                          // Check manual_corrected? 
                          // Usually index is structural, but if user manually ordered chapters, we might break it.
@@ -1335,7 +1371,7 @@ impl LibraryScanner {
                          // But let's respect it for index too if set.
                          if ch.manual_corrected == 0 {
                              let mut updated_ch = ch.clone();
-                             updated_ch.chapter_index = Some(new_index);
+                             updated_ch.chapter_index = Some(idx_from_counter);
                              self.chapter_repo.update(&updated_ch).await?;
                          }
                     }
@@ -1369,33 +1405,20 @@ impl LibraryScanner {
 
             // Extract metadata
             let (_, mut title, _, _, _, duration) = self.extract_chapter_metadata(file_path).await;
-            let mut chapter_idx = (index + 1) as i32;
-            
-            // If regex rule exists, try to apply it to filename
+            // Check Regex for Title and Index
+            let mut regex_idx = None;
             if let Some(re) = &chapter_regex {
                 if let Some(filename) = file_path.file_stem().and_then(|s| s.to_str()) {
                     if let Some(caps) = re.captures(filename) {
-                        // Capture Group 1: Index (Optional)
-                        if let Some(m) = caps.get(1) {
-                            if let Ok(idx) = m.as_str().parse::<i32>() {
-                                chapter_idx = idx;
-                            }
-                        }
-                        
-                        // Capture Group 2: Title (Optional)
-                        if let Some(m) = caps.get(2) {
-                            title = m.as_str().to_string();
-                        }
+                         if let Some(m) = caps.get(1) {
+                             if let Ok(idx) = m.as_str().parse::<i32>() {
+                                 regex_idx = Some(idx);
+                             }
+                         }
+                         if let Some(m) = caps.get(2) {
+                             title = m.as_str().to_string(); // Update title from regex
+                         }
                     }
-                }
-            } else {
-                // If no regex rule, try to extract chapter number using TextCleaner heuristics
-                // Only if chapter_regex is NOT set (don't override user's manual regex)
-                // Use filename for index extraction, as title might be messy or from metadata
-                if let Some(filename) = file_path.file_stem().and_then(|s| s.to_str()) {
-                     if let Some(idx) = self.text_cleaner.extract_chapter_number(filename) {
-                         chapter_idx = idx;
-                     }
                 }
             }
             
@@ -1408,6 +1431,28 @@ impl LibraryScanner {
             };
             
             let (final_title, is_extra) = self.text_cleaner.clean_chapter_title(&raw_title, book.title.as_deref());
+
+            // Calculate Index using counters
+            let counter_idx = if is_extra {
+                 extra_counter += 1;
+                 extra_counter
+            } else {
+                 main_counter += 1;
+                 main_counter
+            };
+            
+            // Final Index
+            let chapter_idx = regex_idx.unwrap_or_else(|| {
+                 // If no regex rule, try to extract chapter number using TextCleaner heuristics
+                 if chapter_regex.is_none() {
+                     if let Some(filename) = file_path.file_stem().and_then(|s| s.to_str()) {
+                         if let Some(idx) = self.text_cleaner.extract_chapter_number(filename) {
+                             return idx;
+                         }
+                     }
+                 }
+                 counter_idx
+            });
 
             if let Some(mut ch) = existing_chapter {
                 // Update Existing
