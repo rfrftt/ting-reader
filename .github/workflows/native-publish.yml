@@ -56,6 +56,7 @@ jobs:
           npm run build
 
       - name: Inject OpenSSL Vendored Dependency
+        if: matrix.arch == 'arm'
         run: |
           cd backend
           # Inject openssl vendored dependency for static linking to avoid shared library issues
