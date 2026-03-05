@@ -26,7 +26,6 @@ use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use base64::Engine;
-use id3::TagLike;
 
 /// Supported audio file extensions
 // Removed hardcoded encrypted extensions. Plugins should declare their supported extensions.
