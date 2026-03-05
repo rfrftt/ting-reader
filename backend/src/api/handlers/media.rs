@@ -860,6 +860,9 @@ pub async fn stream_chapter(
     
     // Non-encrypted: Stream directly
     let range_header = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
+    
+    // Parse range header manually since we don't have file size yet
+    // We only support simple ranges "bytes=start-end" or "bytes=start-" for now
     let range = if let Some(r) = range_header {
         let r_str = r.replace("bytes=", "");
         let parts: Vec<&str> = r_str.split('-').collect();
@@ -869,12 +872,14 @@ pub async fn stream_chapter(
         } else {
             0
         };
+        // storage_service expects (start, end) where end=0 means "until end of file"
+        // But for get_local_reader, we need to handle limiting manually
         if end > 0 { Some((start, end + 1)) } else { Some((start, 0)) }
     } else {
         None
     };
 
-    let (reader, _content_length) = if library.library_type == "local" {
+    let (mut reader, total_size) = if library.library_type == "local" {
         let (f, size) = state.storage_service.get_local_reader(std::path::Path::new(&chapter.path), range).await
              .map_err(|e| TingError::NotFound(format!("Local file not found: {}", e)))?;
         (Box::new(f) as Box<dyn tokio::io::AsyncRead + Send + Unpin>, size)
@@ -883,24 +888,53 @@ pub async fn stream_chapter(
              .map_err(|e| TingError::NotFound(format!("WebDAV file not found: {}", e)))?
     };
 
+    // Calculate actual content length and range for response headers
+    let start = range.map(|r| r.0).unwrap_or(0);
+    let end = if let Some(r) = range {
+        if r.1 > 0 { std::cmp::min(r.1, total_size) } else { total_size }
+    } else {
+        total_size
+    };
+    
+    let content_length = end.saturating_sub(start);
+    
+    // For local files, we need to limit the reader if a specific end was requested
+    if library.library_type == "local" && content_length < (total_size - start) {
+        reader = Box::new(reader.take(content_length));
+    }
+
     // Convert AsyncRead to Stream
     let stream = ReaderStream::new(reader);
     let body = Body::from_stream(stream);
 
-    let status_code = if range_header.is_some() {
-        StatusCode::PARTIAL_CONTENT
-    } else {
-        StatusCode::OK
-    };
+    let mime_type = mime_guess::from_path(&chapter.path).first_or_octet_stream().to_string();
 
-    Ok((
-        status_code,
-        [
-            (header::CONTENT_TYPE, "audio/mpeg".to_string()),
-            (header::ACCEPT_RANGES, "bytes".to_string()),
-            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
-            ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
-        ],
-        body,
-    ).into_response())
+    if range_header.is_some() {
+        let content_range = format!("bytes {}-{}/{}", start, end.saturating_sub(1), total_size);
+        
+        Ok((
+            StatusCode::PARTIAL_CONTENT,
+            [
+                (header::CONTENT_TYPE, mime_type),
+                (header::CONTENT_LENGTH, content_length.to_string()),
+                (header::CONTENT_RANGE, content_range),
+                (header::ACCEPT_RANGES, "bytes".to_string()),
+                (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
+                ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
+            ],
+            body,
+        ).into_response())
+    } else {
+        Ok((
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, mime_type),
+                (header::CONTENT_LENGTH, total_size.to_string()),
+                (header::ACCEPT_RANGES, "bytes".to_string()),
+                (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
+                ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
+            ],
+            body,
+        ).into_response())
+    }
 }

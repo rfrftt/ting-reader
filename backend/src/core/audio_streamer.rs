@@ -23,6 +23,7 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tracing::{debug, info};
+use id3::TagLike;
 
 /// Audio format enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -337,6 +338,25 @@ impl AudioStreamer {
                         composer = Some(tag.value.to_string());
                     }
                     _ => {}
+                }
+            }
+        }
+
+        // Try to use id3 crate for MP3 files as fallback if metadata is missing
+        if format == AudioFormat::Mp3 && (title.is_none() || artist.is_none() || album.is_none()) {
+            debug!("Using id3 crate fallback for {:?}", file_path);
+            if let Ok(tag) = id3::Tag::read_from_path(file_path) {
+                if title.is_none() {
+                    title = tag.title().map(|s| s.to_string());
+                }
+                if artist.is_none() {
+                    artist = tag.artist().map(|s| s.to_string());
+                }
+                if album.is_none() {
+                    album = tag.album().map(|s| s.to_string());
+                }
+                if album_artist.is_none() {
+                    album_artist = tag.album_artist().map(|s| s.to_string());
                 }
             }
         }
