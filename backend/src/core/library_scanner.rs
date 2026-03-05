@@ -26,6 +26,7 @@ use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use base64::Engine;
+use id3::TagLike;
 
 /// Supported audio file extensions
 // Removed hardcoded encrypted extensions. Plugins should declare their supported extensions.
@@ -1270,9 +1271,56 @@ impl LibraryScanner {
              }
         }
 
-        let cover_url = self.find_cover_image(dir).or(cover_url_from_plugin);
+        let mut cover_url = self.find_cover_image(dir).or(cover_url_from_plugin);
+        
+        // If cover still not found and we have audio files, try to extract from ID3
+        if cover_url.is_none() && !files.is_empty() {
+             // Only try for MP3 files for now as we use id3 crate
+             let first_file = &files[0];
+             if let Some(ext) = first_file.extension() {
+                 let ext_str = ext.to_string_lossy().to_lowercase();
+                 if ext_str == "mp3" {
+                     if let Some(path) = self.extract_and_save_cover(first_file, dir) {
+                         cover_url = Some(path);
+                     }
+                 }
+             }
+        }
 
         (title, author, narrator, None, None, cover_url, source)
+    }
+
+    fn extract_and_save_cover(&self, audio_path: &Path, book_dir: &Path) -> Option<String> {
+        if let Ok(tag) = id3::Tag::read_from_path(audio_path) {
+            // Prefer CoverFront, otherwise take the first picture
+            let picture = tag.pictures()
+                .find(|p| p.picture_type == id3::frame::PictureType::CoverFront)
+                .or_else(|| tag.pictures().next());
+
+            if let Some(picture) = picture {
+                // Determine extension from mime type
+                let ext = match picture.mime_type.as_str() {
+                    "image/jpeg" | "image/jpg" => "jpg",
+                    "image/png" => "png",
+                    "image/webp" => "webp",
+                    "image/gif" => "gif",
+                    _ => "jpg", // Default to jpg
+                };
+                
+                let cover_filename = format!("cover.{}", ext);
+                let cover_path = book_dir.join(&cover_filename);
+                
+                // Save to file
+                if let Err(e) = std::fs::write(&cover_path, &picture.data) {
+                    warn!("Failed to save extracted cover to {:?}: {}", cover_path, e);
+                    return None;
+                }
+                
+                info!("Extracted cover from ID3 tag to {:?}", cover_path);
+                return Some(cover_path.to_string_lossy().to_string());
+            }
+        }
+        None
     }
 
     async fn process_chapters(
