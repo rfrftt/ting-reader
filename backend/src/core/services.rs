@@ -395,6 +395,8 @@ impl ScraperService {
     pub async fn search(
         &self,
         query: &str,
+        author: Option<&str>,
+        narrator: Option<&str>,
         source: Option<&str>,
         page: u32,
         page_size: u32,
@@ -425,7 +427,7 @@ impl ScraperService {
         let source_id = self.select_scraper(source).await?;
         
         // Generate cache key (use clean_query)
-        let cache_key = format!("{}:{}:{}:{}", source_id, clean_query, page, page_size);
+        let cache_key = format!("{}:{}:{}:{}:{}:{}", source_id, clean_query, author.unwrap_or(""), narrator.unwrap_or(""), page, page_size);
         
         // Check cache first
         if let Some(cached) = self.get_cached_search(&cache_key) {
@@ -438,6 +440,8 @@ impl ScraperService {
         // Call scraper plugin with error handling and fallback
         let params = json!({
             "query": clean_query,
+            "author": author,
+            "narrator": narrator,
             "page": page,
         });
         
@@ -675,7 +679,7 @@ impl ScraperService {
         
         for source_id in all_sources {
             // Search (page 1, limit 1)
-            match self.search(query, Some(&source_id), 1, 1).await {
+            match self.search(query, None, None, Some(&source_id), 1, 1).await {
                 Ok(search_res) => {
                     if let Some(item) = search_res.items.first() {
                         // We only use the search result. 

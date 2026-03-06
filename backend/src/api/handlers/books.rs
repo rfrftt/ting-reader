@@ -445,7 +445,14 @@ pub async fn search_books(
 ) -> Result<impl IntoResponse> {
     let result = state
         .scraper_service
-        .search(&query.q, query.source.as_deref(), query.page, query.page_size)
+        .search(
+            &query.q, 
+            None, 
+            None, 
+            query.source.as_deref(), 
+            query.page, 
+            query.page_size
+        )
         .await?;
 
     Ok(Json(SearchResponse {
@@ -708,7 +715,14 @@ pub async fn scrape_book_diff(
 
     // 3. Search and Get Detail from Primary Source
     // Use scraper service search to find match by title
-    let search_results = state.scraper_service.search(&req.query, Some(&primary_source_id), 1, 1).await?;
+    let search_results = state.scraper_service.search(
+        &req.query, 
+        req.author.as_deref(),
+        req.narrator.as_deref(),
+        Some(&primary_source_id), 
+        1, 
+        1
+    ).await?;
     
     if search_results.items.is_empty() {
         return Err(TingError::NotFound("No matching book found in scrapers".to_string()));
@@ -736,7 +750,14 @@ pub async fn scrape_book_diff(
     if let Some(srcs) = &config.author_sources {
         if !srcs.is_empty() && srcs[0] != primary_source_id {
              if let Some(s_id) = sources.iter().find(|s| s.id == srcs[0] && s.enabled).map(|s| s.id.clone()) {
-                 if let Ok(res) = state.scraper_service.search(&req.query, Some(&s_id), 1, 1).await {
+                 if let Ok(res) = state.scraper_service.search(
+                     &req.query, 
+                     req.author.as_deref(),
+                     req.narrator.as_deref(),
+                     Some(&s_id), 
+                     1, 
+                     1
+                 ).await {
                      if !res.items.is_empty() {
                          let item = &res.items[0];
                          if !item.author.is_empty() { detail.author = item.author.clone(); }
@@ -750,7 +771,14 @@ pub async fn scrape_book_diff(
     if let Some(srcs) = &config.narrator_sources {
         if !srcs.is_empty() && srcs[0] != primary_source_id {
              if let Some(s_id) = sources.iter().find(|s| s.id == srcs[0] && s.enabled).map(|s| s.id.clone()) {
-                 if let Ok(res) = state.scraper_service.search(&req.query, Some(&s_id), 1, 1).await {
+                 if let Ok(res) = state.scraper_service.search(
+                     &req.query, 
+                     req.author.as_deref(),
+                     req.narrator.as_deref(),
+                     Some(&s_id), 
+                     1, 
+                     1
+                 ).await {
                      if !res.items.is_empty() {
                          let item = &res.items[0];
                          if item.narrator.is_some() { detail.narrator = item.narrator.clone(); }
@@ -764,7 +792,14 @@ pub async fn scrape_book_diff(
     if let Some(srcs) = &config.cover_sources {
         if !srcs.is_empty() && srcs[0] != primary_source_id {
              if let Some(s_id) = sources.iter().find(|s| s.id == srcs[0] && s.enabled).map(|s| s.id.clone()) {
-                 if let Ok(res) = state.scraper_service.search(&req.query, Some(&s_id), 1, 1).await {
+                 if let Ok(res) = state.scraper_service.search(
+                     &req.query, 
+                     req.author.as_deref(),
+                     req.narrator.as_deref(),
+                     Some(&s_id), 
+                     1, 
+                     1
+                 ).await {
                      if !res.items.is_empty() {
                          let item = &res.items[0];
                          if item.cover_url.is_some() { detail.cover_url = item.cover_url.clone(); }
@@ -778,7 +813,14 @@ pub async fn scrape_book_diff(
     if let Some(srcs) = &config.intro_sources {
         if !srcs.is_empty() && srcs[0] != primary_source_id {
              if let Some(s_id) = sources.iter().find(|s| s.id == srcs[0] && s.enabled).map(|s| s.id.clone()) {
-                 if let Ok(res) = state.scraper_service.search(&req.query, Some(&s_id), 1, 1).await {
+                 if let Ok(res) = state.scraper_service.search(
+                     &req.query, 
+                     req.author.as_deref(),
+                     req.narrator.as_deref(),
+                     Some(&s_id), 
+                     1, 
+                     1
+                 ).await {
                      if !res.items.is_empty() {
                          let item = &res.items[0];
                          if let Some(intro) = &item.intro {
@@ -794,7 +836,14 @@ pub async fn scrape_book_diff(
     if let Some(srcs) = &config.tags_sources {
         if !srcs.is_empty() && srcs[0] != primary_source_id {
              if let Some(s_id) = sources.iter().find(|s| s.id == srcs[0] && s.enabled).map(|s| s.id.clone()) {
-                 if let Ok(res) = state.scraper_service.search(&req.query, Some(&s_id), 1, 1).await {
+                 if let Ok(res) = state.scraper_service.search(
+                     &req.query, 
+                     req.author.as_deref(),
+                     req.narrator.as_deref(),
+                     Some(&s_id), 
+                     1, 
+                     1
+                 ).await {
                      if !res.items.is_empty() {
                          let item = &res.items[0];
                          if !item.tags.is_empty() { detail.tags = item.tags.clone(); }

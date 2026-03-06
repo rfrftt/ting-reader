@@ -841,7 +841,7 @@ impl TaskQueue {
                     .ok_or_else(|| crate::core::error::TingError::TaskError("Scraper service not configured".to_string()))?;
                 
                 info!(plugin_id = %plugin_id, query = %query, "Executing scraper search task");
-                let result = scraper_service.search(query, Some(plugin_id), 1, 20).await?;
+                let result = scraper_service.search(query, None, None, Some(plugin_id), 1, 20).await?;
                 info!(items = result.items.len(), "Scraper search completed");
             }
             TaskPayload::Custom { task_type, data } => {

@@ -558,8 +558,13 @@ impl Plugin for WasmPlugin {
 
 #[async_trait::async_trait]
 impl ScraperPlugin for WasmPlugin {
-    async fn search(&self, query: &str, page: u32) -> Result<SearchResult> {
-        let params = serde_json::json!({ "query": query, "page": page }).to_string();
+    async fn search(&self, query: &str, author: Option<&str>, narrator: Option<&str>, page: u32) -> Result<SearchResult> {
+        let params = serde_json::json!({ 
+            "query": query, 
+            "author": author,
+            "narrator": narrator,
+            "page": page 
+        }).to_string();
         let (method_ptr, params_ptr) = self.write_args("search", &params).await?;
         let result_ptr = self.invoke(method_ptr, params_ptr).await?;
         let result_json = self.read_string(result_ptr).await?;

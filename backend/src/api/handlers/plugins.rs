@@ -216,7 +216,14 @@ pub async fn scraper_search(
     let page_size = request.page_size.unwrap_or(20);
 
     let result = state.scraper_service
-        .search(&request.query, request.source.as_deref(), page, page_size)
+        .search(
+            &request.query,
+            request.author.as_deref(),
+            request.narrator.as_deref(),
+            request.source.as_deref(),
+            page,
+            page_size,
+        )
         .await?;
 
     Ok(Json(SearchResponse {

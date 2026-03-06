@@ -59,6 +59,10 @@ pub struct ScraperSearchRequest {
     pub page: Option<u32>,
     /// Page size
     pub page_size: Option<u32>,
+    /// Optional author name for filtering
+    pub author: Option<String>,
+    /// Optional narrator name for filtering
+    pub narrator: Option<String>,
 }
 
 /// Information about a scraper source
@@ -327,6 +331,8 @@ pub struct BatchUpdateChapterItem {
 #[derive(Debug, Deserialize)]
 pub struct ScrapeDiffRequest {
     pub query: String,
+    pub author: Option<String>,
+    pub narrator: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

@@ -26,6 +26,8 @@ pub trait ScraperPlugin: Plugin {
     ///
     /// # Arguments
     /// * `query` - Search keyword
+    /// * `author` - Optional author name for filtering
+    /// * `narrator` - Optional narrator name for filtering
     /// * `page` - Page number (1-indexed)
     ///
     /// # Returns
@@ -33,7 +35,7 @@ pub trait ScraperPlugin: Plugin {
     ///
     /// # Errors
     /// Returns an error if the search fails or the network request fails
-    async fn search(&self, query: &str, page: u32) -> Result<SearchResult>;
+    async fn search(&self, query: &str, author: Option<&str>, narrator: Option<&str>, page: u32) -> Result<SearchResult>;
 
     /// Get detailed information about a book
     ///
