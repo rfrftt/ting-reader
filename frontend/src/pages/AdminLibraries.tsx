@@ -50,10 +50,16 @@ const ScraperConfigurator = ({
   const currentTab = tabs.find(t => t.id === activeTab) || tabs[0];
   const currentKey = currentTab.key;
   const activeIds: string[] = config[currentKey] || [];
-  const nfoEnabled = config.nfo_writing_enabled || false;
+  const nfoEnabled = config.nfoWritingEnabled || false;
+  const preferAudioTitle = config.preferAudioTitle || false;
 
   const handleNfoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const newConfig = { ...config, nfo_writing_enabled: e.target.checked };
+      const newConfig = { ...config, nfoWritingEnabled: e.target.checked };
+      onChange(JSON.stringify(newConfig, null, 2));
+  };
+
+  const handlePreferAudioTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const newConfig = { ...config, preferAudioTitle: e.target.checked };
       onChange(JSON.stringify(newConfig, null, 2));
   };
 
@@ -87,26 +93,48 @@ const ScraperConfigurator = ({
 
   return (
     <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 border border-slate-200 dark:border-slate-700">
-      {/* NFO Toggle - Only show for local libraries */}
-      {libraryType === 'local' && (
-        <div className="flex items-center gap-3 mb-4 p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">
+      {/* Settings Toggles */}
+      <div className="space-y-2 mb-4">
+        {/* NFO Toggle - Only show for local libraries */}
+        {libraryType === 'local' && (
+          <div className="flex items-center gap-3 p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">
+            <input 
+              type="checkbox" 
+              id="nfo-writing" 
+              checked={nfoEnabled} 
+              onChange={handleNfoChange}
+              className="w-4 h-4 text-primary-600 rounded focus:ring-primary-500 cursor-pointer"
+            />
+            <div className="flex flex-col">
+              <label htmlFor="nfo-writing" className="text-sm font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
+                启用 NFO 元数据写入
+              </label>
+              <span className="text-[10px] text-slate-400">
+                开启后，刮削或修改元数据时将同步写入 book.nfo 文件
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Prefer Audio Title - Show for all libraries */}
+        <div className="flex items-center gap-3 p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">
           <input 
             type="checkbox" 
-            id="nfo-writing" 
-            checked={nfoEnabled} 
-            onChange={handleNfoChange}
+            id="prefer-audio-title" 
+            checked={preferAudioTitle} 
+            onChange={handlePreferAudioTitleChange}
             className="w-4 h-4 text-primary-600 rounded focus:ring-primary-500 cursor-pointer"
           />
           <div className="flex flex-col">
-            <label htmlFor="nfo-writing" className="text-sm font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
-              启用 NFO 元数据写入
+            <label htmlFor="prefer-audio-title" className="text-sm font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
+              优先使用音频 ID3 标题
             </label>
             <span className="text-[10px] text-slate-400">
-              开启后，刮削或修改元数据时将同步写入 book.nfo 文件
+              开启后，扫描时将优先使用音频文件的 Title 标签作为书名
             </span>
           </div>
         </div>
-      )}
+      </div>
 
       {/* Tabs */}
       <div className="flex gap-2 overflow-x-auto pb-2 mb-4 border-b border-slate-200 dark:border-slate-700 no-scrollbar">

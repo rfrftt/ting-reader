@@ -15,6 +15,7 @@ export interface ScraperConfig {
   narratorSources?: string[];
   tagsSources?: string[];
   nfo_writing_enabled?: boolean;
+  prefer_audio_title?: boolean;
 }
 
 export interface Library {
