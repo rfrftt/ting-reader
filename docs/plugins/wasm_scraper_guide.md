@@ -29,6 +29,7 @@ serde_json = "1.0"
 ### 1.2 核心代码 (src/lib.rs)
 ```rust
 use std::ffi::{CStr, CString};
+use std::os::raw::c_char;
 use serde::{Deserialize, Serialize};
 
 // 1. 定义数据结构
@@ -52,39 +53,28 @@ struct BookItem {
 }
 
 // 2. 导出 invoke 函数 (必须!)
+// 它是插件与宿主交互的唯一入口
 #[no_mangle]
-pub extern "C" fn invoke(method_ptr: *const i8, params_ptr: *const i8) -> *mut i8 {
+pub extern "C" fn invoke(method_ptr: *const c_char, params_ptr: *const c_char) -> *mut c_char {
     let method = unsafe { CStr::from_ptr(method_ptr).to_string_lossy() };
-    let params = unsafe { CStr::from_ptr(params_ptr).to_string_lossy() };
+    let params_json = unsafe { CStr::from_ptr(params_ptr).to_string_lossy() };
 
     let result = match method.as_ref() {
-        "search" => handle_search(&params),
-        _ => Err("Unknown method".to_string()),
+        "search" => handle_search(&params_json).map(|r| serde_json::to_string(&r).unwrap()),
+        // 未来扩展其他方法...
+        _ => Err(format!("Unknown method: {}", method)),
     };
 
-    let json = match result {
-        Ok(v) => serde_json::to_string(&v).unwrap(),
+    let response_json = match result {
+        Ok(json) => json,
         Err(e) => serde_json::json!({ "error": e }).to_string(),
     };
-    CString::new(json).unwrap().into_raw()
+
+    CString::new(response_json).unwrap().into_raw()
 }
 
-// 3. 业务逻辑实现
-fn handle_search(params_json: &str) -> Result<SearchResult, String> {
-    // 解析 JSON 参数
-    let params: SearchParams = serde_json::from_str(params_json).map_err(|e| e.to_string())?;
-    
-    // 发起 HTTP 请求 (需自行封装宿主提供的 http_request)
-    let url = format!("https://api.example.com/search?q={}", params.query);
-    let body = fetch_url(&url)?;
-    
-    // 解析响应并构造结果
-    // ...
-    
-    Ok(SearchResult { ... })
-}
-
-// 4. 内存管理导出 (必须!)
+// 3. 内存管理导出 (必须!)
+// 宿主环境需要分配和释放 WASM 内存以传递字符串
 #[no_mangle]
 pub extern "C" fn alloc(len: usize) -> *mut u8 {
     let mut buf = Vec::with_capacity(len);
@@ -98,6 +88,31 @@ pub extern "C" fn dealloc(ptr: *mut u8, len: usize) {
     unsafe {
         let _ = Vec::from_raw_parts(ptr, 0, len);
     }
+}
+
+// 4. 业务逻辑实现
+fn handle_search(params_json: &str) -> Result<SearchResult, String> {
+    // 解析 JSON 参数
+    let params: SearchParams = serde_json::from_str(params_json).map_err(|e| e.to_string())?;
+    
+    // 发起 HTTP 请求 (需自行封装宿主提供的 http_request)
+    let url = format!("https://api.example.com/search?q={}", params.query);
+    let body = fetch_url(&url)?;
+    
+    // 解析响应并构造结果
+    // ...
+    
+    // 最佳实践：如果提供了 author 筛选，在此处进行过滤或重排
+    if let Some(author) = params.author {
+        // ... filter logic
+    }
+
+    Ok(SearchResult { 
+        items: vec![], // ...
+        total: 0,
+        page: params.page,
+        page_size: 20
+    })
 }
 ```
 
