@@ -288,6 +288,8 @@ pub struct HealthResponse {
     pub components: ComponentsHealth,
     /// Timestamp of the health check
     pub timestamp: String,
+    /// Application version
+    pub version: String,
 }
 
 /// Overall health status
