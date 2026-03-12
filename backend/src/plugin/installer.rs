@@ -70,7 +70,8 @@ impl PluginInstaller {
         debug!("Dependencies satisfied for plugin: {}", package.metadata.name);
         
         // Step 3: Extract and install (Requirement 26.4)
-        let plugin_id = format!("{}@{}", package.metadata.name, package.metadata.version);
+        // Use ID instead of name for directory structure
+        let plugin_id = format!("{}@{}", package.metadata.id, package.metadata.version);
         let install_path = self.plugin_dir.join(&plugin_id);
         
         // Create backup point for rollback
@@ -91,11 +92,9 @@ impl PluginInstaller {
         }
     }
     
-    /// Validate plugin package integrity
-    ///
-    /// **Validates: Requirement 26.2**
-    fn validate_package(&self, package_path: &Path) -> Result<PluginPackage> {
-        debug!("Validating plugin package: {}", package_path.display());
+    /// Get plugin metadata from a package file without full validation
+    pub fn get_package_metadata(&self, package_path: &Path) -> Result<PluginMetadata> {
+        debug!("Reading plugin metadata from: {}", package_path.display());
         
         // Check if package exists
         if !package_path.exists() {
@@ -104,7 +103,7 @@ impl PluginInstaller {
             ));
         }
 
-        let metadata = if package_path.is_dir() {
+        if package_path.is_dir() {
             // Directory package
             let metadata_path = package_path.join("plugin.json");
             if !metadata_path.exists() {
@@ -116,7 +115,7 @@ impl PluginInstaller {
             // Read metadata
             let metadata_content = fs::read_to_string(&metadata_path)?;
             serde_json::from_str(&metadata_content)
-                .map_err(|e| TingError::PluginLoadError(format!("Invalid plugin.json: {}", e)))?
+                .map_err(|e| TingError::PluginLoadError(format!("Invalid plugin.json: {}", e)))
         } else {
             // Zip package
             let file = fs::File::open(package_path)?;
@@ -131,8 +130,18 @@ impl PluginInstaller {
             metadata_file.read_to_string(&mut metadata_content)?;
             
             serde_json::from_str(&metadata_content)
-                .map_err(|e| TingError::PluginLoadError(format!("Invalid plugin.json: {}", e)))?
-        };
+                .map_err(|e| TingError::PluginLoadError(format!("Invalid plugin.json: {}", e)))
+        }
+    }
+
+    /// Validate plugin package integrity
+    ///
+    /// **Validates: Requirement 26.2**
+    fn validate_package(&self, package_path: &Path) -> Result<PluginPackage> {
+        debug!("Validating plugin package: {}", package_path.display());
+        
+        // Get metadata using the helper method
+        let metadata = self.get_package_metadata(package_path)?;
         
         // Calculate checksum
         let checksum = self.calculate_checksum(package_path)?;

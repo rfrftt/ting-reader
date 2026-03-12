@@ -12,7 +12,7 @@ use crate::plugin::native::NativeLoader;
 use crate::plugin::native_plugin::NativePlugin;
 use crate::plugin::runtime::WasmRuntime;
 use crate::plugin::runtime::WasmPlugin;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 use serde_json::Value;
 use serde::{Serialize, Deserialize};
 
@@ -117,6 +117,7 @@ pub struct PluginManager {
     registry: Arc<RwLock<PluginRegistry>>,
     metadata_cache: Arc<RwLock<HashMap<PluginId, PathBuf>>>,
     wasm_runtime: Arc<WasmRuntime>,
+    http_client: reqwest::Client,
     _event_subscribers: Arc<RwLock<Vec<Box<dyn Fn(PluginStateEvent) + Send + Sync>>>>,
 }
 
@@ -124,11 +125,17 @@ impl PluginManager {
     /// Create a new plugin manager
     pub fn new(config: PluginConfig) -> Result<Self> {
         let wasm_runtime = Arc::new(WasmRuntime::new()?);
+        let http_client = reqwest::Client::builder()
+            .user_agent("TingReader/1.0")
+            .build()
+            .map_err(|e| TingError::NetworkError(e.to_string()))?;
+
         Ok(Self {
             config,
             registry: Arc::new(RwLock::new(HashMap::new())),
             metadata_cache: Arc::new(RwLock::new(HashMap::new())),
             wasm_runtime,
+            http_client,
             _event_subscribers: Arc::new(RwLock::new(Vec::new())),
         })
     }
@@ -164,24 +171,72 @@ impl PluginManager {
             tokio::fs::create_dir_all(plugin_dir).await.map_err(TingError::IoError)?;
         }
         
+        // First pass: scan all potential plugins
+        let mut potential_plugins: HashMap<String, Vec<(PluginMetadata, PathBuf)>> = HashMap::new();
         let mut read_dir = tokio::fs::read_dir(plugin_dir).await.map_err(TingError::IoError)?;
         
         while let Some(entry) = read_dir.next_entry().await.map_err(TingError::IoError)? {
             let path = entry.path();
-            if path.is_dir() {
-                // Check if it's a valid plugin package
-                if path.join("plugin.json").exists() {
-                    match self.load_plugin(&path).await {
-                        Ok(id) => {
-                            if let Some(entry) = self.registry.read().await.get(&id) {
-                                discovered.push(entry.metadata.clone());
+            if path.is_dir() && path.join("plugin.json").exists() {
+                match self.read_plugin_metadata(&path) {
+                    Ok(metadata) => {
+                         // Group by plugin ID (or name for legacy)
+                         let id = metadata.id.clone();
+                         potential_plugins.entry(id).or_default().push((metadata, path));
+                    }
+                    Err(e) => {
+                        error!("Failed to read metadata from {}: {}", path.display(), e);
+                    }
+                }
+            }
+        }
+        
+        // Second pass: load only the latest version for each plugin ID
+        for (id, versions) in potential_plugins {
+            // Helper to parse version string
+            fn parse_ver(v: &str) -> Vec<u32> {
+                 v.trim_start_matches('v')
+                  .split('.')
+                  .filter_map(|s| s.parse::<u32>().ok())
+                  .collect()
+            }
+
+            // Find the latest version
+            // Use clone to avoid borrow issues since we need to iterate again for cleanup
+            let latest_version = versions.iter()
+                .map(|(m, _)| m.version.clone())
+                .max_by(|a, b| parse_ver(a).cmp(&parse_ver(b)));
+            
+            if let Some(latest_ver) = latest_version {
+                 // Find the path for the latest version
+                 if let Some((metadata, path)) = versions.iter().find(|(m, _)| m.version == latest_ver) {
+                     info!("Loading latest version for {}: {}", id, metadata.version);
+                     match self.load_plugin(path).await {
+                        Ok(plugin_id) => {
+                            if let Some(plugin_entry) = self.registry.read().await.get(&plugin_id) {
+                                discovered.push(plugin_entry.metadata.clone());
                             }
                         }
                         Err(e) => {
                             error!("Failed to load plugin from {}: {}", path.display(), e);
                         }
-                    }
-                }
+                     }
+                 }
+                 
+                 // Cleanup old versions
+                 for (meta, p) in versions {
+                     if meta.version != latest_ver {
+                         info!("Found old version of {}: {} at {}. Cleaning up...", id, meta.version, p.display());
+                         // Try to remove old directory
+                         // Clone path for error logging to avoid borrow after move
+                         let p_display = p.display().to_string();
+                         if let Err(e) = tokio::fs::remove_dir_all(p).await {
+                             warn!("Failed to remove old plugin directory {}: {}", p_display, e);
+                         } else {
+                             info!("Removed old plugin directory: {}", p_display);
+                         }
+                     }
+                 }
             }
         }
         
@@ -199,7 +254,7 @@ impl PluginManager {
             };
             
             PluginInfo {
-                id: entry.metadata.id(),
+                id: entry.metadata.instance_id(),
                 name: entry.metadata.name.clone(),
                 version: entry.metadata.version.clone(),
                 author: entry.metadata.author.clone(),
@@ -218,9 +273,9 @@ impl PluginManager {
     /// Load a plugin from a directory
     pub async fn load_plugin(&self, plugin_path: &Path) -> Result<PluginId> {
         let metadata = self.read_plugin_metadata(plugin_path)?;
-        let plugin_id = format!("{}@{}", metadata.name, metadata.version);
+        let plugin_id = metadata.instance_id();
         
-        info!("Loading plugin: {}", plugin_id);
+        info!("Loading plugin: {} from {}", plugin_id, plugin_path.display());
         
         // Check if already loaded
         {
@@ -287,9 +342,9 @@ impl PluginManager {
             // Create native loader
             let loader = Arc::new(NativeLoader::new());
             // Load library
-            loader.load_library(metadata.id(), &lib_path, metadata.clone())?;
+            loader.load_library(metadata.instance_id(), &lib_path, metadata.clone())?;
             
-            let plugin = NativePlugin::new(metadata.id(), metadata.clone(), loader);
+            let plugin = NativePlugin::new(metadata.instance_id(), metadata.clone(), loader);
             Ok(Arc::new(plugin))
         } else {
             Err(TingError::PluginLoadError(format!("Unsupported entry point: {}", metadata.entry_point)))
@@ -318,8 +373,6 @@ impl PluginManager {
         
         // 1. Unload plugin first
         // We ignore "not found" error from unload because it might be already unloaded
-        // But if shutdown fails, we might still want to proceed with deletion?
-        // Let's try to unload, log error if any, but proceed.
         if let Err(e) = self.unload_plugin(plugin_id).await {
             // Only ignore PluginNotFound, others might be important but shouldn't block uninstallation
             if !matches!(e, TingError::PluginNotFound(_)) {
@@ -333,7 +386,44 @@ impl PluginManager {
             self.config.plugin_dir.join("temp")
         )?;
         
-        installer.uninstall_plugin(plugin_id)?;
+        // Try to uninstall using ID-based directory name first (new style)
+        if let Err(e) = installer.uninstall_plugin(plugin_id) {
+            // Fallback: try Name-based directory name (old style)
+            // We need to parse ID to get name and version if possible, or iterate directories
+            // Since we don't have the name here easily if it's already unloaded...
+            // We should try to find directory that contains plugin.json with this ID
+            
+            warn!("Failed to uninstall plugin using standard ID path: {}. Searching for directory...", e);
+            
+            // Search for the plugin directory manually
+            let mut found = false;
+            let mut read_dir = tokio::fs::read_dir(&self.config.plugin_dir).await.map_err(TingError::IoError)?;
+            
+            while let Some(entry) = read_dir.next_entry().await.map_err(TingError::IoError)? {
+                let path = entry.path();
+                if path.is_dir() {
+                    // Check if plugin.json exists before reading
+                    if path.join("plugin.json").exists() {
+                         if let Ok(metadata) = self.read_plugin_metadata(&path) {
+                             if &metadata.instance_id() == plugin_id {
+                                 info!("Found plugin directory for {}: {}", plugin_id, path.display());
+                                 if let Err(e) = tokio::fs::remove_dir_all(&path).await {
+                                     error!("Failed to remove plugin directory {}: {}", path.display(), e);
+                                     // Don't return error here, try to continue cleanup
+                                 }
+                                 found = true;
+                                 break;
+                             }
+                         }
+                    }
+                }
+            }
+            
+            if !found {
+                 // Re-return the original error if we couldn't find it manually either
+                 return Err(e);
+            }
+        }
         
         // 3. Remove from metadata cache
         {
@@ -366,7 +456,7 @@ impl PluginManager {
         
         // Read new metadata first to check version
         let new_metadata = self.read_plugin_metadata(&plugin_path)?;
-        let new_id = format!("{}@{}", new_metadata.name, new_metadata.version);
+        let new_id = new_metadata.instance_id();
         
         if new_id == *id {
             // Same version reload - must unload first to avoid ID conflict
@@ -384,7 +474,7 @@ impl PluginManager {
                     // 3. Register new instance
                     {
                         let mut registry = self.registry.write().await;
-                        registry.insert(new_metadata.clone().id(), PluginEntry::new(new_metadata.clone(), instance));
+                        registry.insert(new_metadata.instance_id(), PluginEntry::new(new_metadata.clone(), instance));
                     }
                     
                     // 4. Initialize
@@ -431,6 +521,50 @@ impl PluginManager {
             self.config.plugin_dir.join("temp")
         )?;
         
+        // Get metadata to check if plugin is already loaded
+        // This helps with "overwrite install" scenario where we need to unload first to release file locks
+        let metadata = installer.get_package_metadata(package_path)?;
+        let target_plugin_id = metadata.instance_id();
+        
+        // Check if this specific version is already loaded
+        let needs_unload = {
+            let registry = self.registry.read().await;
+            registry.contains_key(&target_plugin_id)
+        };
+        
+        // Check for other versions of the same plugin to clean up
+        let old_versions_to_remove = {
+            let registry = self.registry.read().await;
+            let mut to_remove = Vec::new();
+            for (id, entry) in registry.iter() {
+                // Same plugin ID (name/id match) but different version
+                // Check using ID field first (new style), then name (old style)
+                let is_same_plugin = entry.metadata.id == metadata.id || 
+                                     (entry.metadata.id == entry.metadata.name && entry.metadata.name == metadata.name);
+                
+                if is_same_plugin && id != &target_plugin_id {
+                    to_remove.push(id.clone());
+                }
+            }
+            to_remove
+        };
+
+        // Unload old versions first
+        for old_id in old_versions_to_remove {
+            info!("Found old version of plugin {}, removing: {}", metadata.id, old_id);
+            if let Err(e) = self.uninstall_plugin(&old_id).await {
+                tracing::warn!("Failed to uninstall old version {}: {}", old_id, e);
+            }
+        }
+        
+        if needs_unload {
+            info!("Plugin {} is already loaded, unloading before re-installation", target_plugin_id);
+            if let Err(e) = self.unload_plugin(&target_plugin_id).await {
+                tracing::warn!("Failed to unload plugin {} before installation: {}", target_plugin_id, e);
+                // Continue anyway, installer handles backup/restore
+            }
+        }
+        
         let plugin_id = installer.install_plugin(package_path, |_| Ok(())).await?;
         
         // Automatically load the plugin after installation
@@ -442,6 +576,45 @@ impl PluginManager {
         }
         
         Ok(plugin_id)
+    }
+
+    /// Get the list of plugins from the store
+    pub async fn get_store_plugins(&self) -> Result<Vec<crate::plugin::store::StorePlugin>> {
+        crate::plugin::store::fetch_store_plugins(&self.http_client).await
+    }
+    
+    /// Install a plugin from the store
+    pub async fn install_plugin_from_store(&self, plugin_id: &str) -> Result<PluginId> {
+        info!("Installing plugin from store: {}", plugin_id);
+        
+        // 1. Fetch plugin info to get URL
+        let plugins = self.get_store_plugins().await?;
+        let plugin = plugins.iter()
+            .find(|p| p.id == plugin_id)
+            .ok_or_else(|| TingError::PluginNotFound(format!("Plugin {} not found in store", plugin_id)))?;
+            
+        let download_url = crate::plugin::store::get_download_url(plugin)?;
+        
+        info!("Downloading plugin {} from {}", plugin_id, download_url);
+        
+        // 2. Download to temp file
+        let temp_dir = self.config.plugin_dir.join("temp");
+        if !temp_dir.exists() {
+             tokio::fs::create_dir_all(&temp_dir).await.map_err(TingError::IoError)?;
+        }
+        
+        let temp_path = crate::plugin::store::download_plugin(&self.http_client, &download_url, &temp_dir).await?;
+        
+        // 3. Install
+        info!("Installing plugin package from {}", temp_path.display());
+        let result = self.install_plugin_package(&temp_path).await;
+        
+        // 4. Cleanup temp file
+        if let Err(e) = tokio::fs::remove_file(&temp_path).await {
+            tracing::warn!("Failed to remove temp file {}: {}", temp_path.display(), e);
+        }
+        
+        result
     }
 
     /// Call a scraper plugin method
@@ -525,6 +698,7 @@ impl PluginManager {
             FormatMethod::DecryptChunk => "decrypt_chunk",
             FormatMethod::GetMetadataReadSize => "get_metadata_read_size",
             FormatMethod::GetDecryptionPlan => "get_decryption_plan",
+            FormatMethod::GetStreamUrl => "get_stream_url",
         };
         
         if let Some(native) = instance.as_any().downcast_ref::<NativePlugin>() {
@@ -534,6 +708,53 @@ impl PluginManager {
         } else {
              Err(TingError::PluginExecutionError("Unknown plugin type".to_string()))
         }
+    }
+
+    /// Call a utility plugin method
+    pub async fn call_utility(&self, id: &PluginId, method: UtilityMethod, params: Value) -> Result<Value> {
+        let instance = {
+            let registry = self.registry.read().await;
+            let entry = registry.get(id).ok_or_else(|| TingError::PluginNotFound(id.clone()))?;
+            if entry.metadata.plugin_type != PluginType::Utility {
+                return Err(TingError::PluginExecutionError(format!("Plugin {} is not a utility plugin", id)));
+            }
+            entry.instance.clone()
+        };
+
+        let method_name = match method {
+            UtilityMethod::GetFfmpegPath => "get_ffmpeg_path",
+            UtilityMethod::GetFfprobePath => "get_ffprobe_path",
+            UtilityMethod::CheckVersion => "check_version",
+        };
+        
+        if let Some(native) = instance.as_any().downcast_ref::<NativePlugin>() {
+             native.call_method(method_name, params).await
+        } else if let Some(wrapper) = instance.as_any().downcast_ref::<JavaScriptPluginWrapper>() {
+             wrapper.call_function(method_name, params).await
+        } else {
+             Err(TingError::PluginExecutionError("Unknown plugin type".to_string()))
+        }
+    }
+
+    /// Helper to find and call ffmpeg-utils to get ffmpeg path
+    pub async fn get_ffmpeg_path(&self) -> Option<String> {
+        let registry = self.registry.read().await;
+        // Find plugin with name "FFmpeg Provider"
+        let plugin_id = registry.values()
+            .find(|e| e.metadata.name == "FFmpeg Provider")
+            .map(|e| e.metadata.instance_id());
+            
+        drop(registry); // Release lock
+        
+        if let Some(id) = plugin_id {
+            if let Ok(result) = self.call_utility(&id, UtilityMethod::GetFfmpegPath, serde_json::json!({})).await {
+                return result.get("path").and_then(|v| v.as_str()).map(|s| s.to_string());
+            }
+        }
+        
+        // Fallback: Check system path
+        // We assume ffmpeg might be in PATH
+        Some("ffmpeg".to_string())
     }
 
     // Lifecycle methods
@@ -618,7 +839,7 @@ impl PluginManager {
                 };
 
                 PluginInfo {
-                    id: entry.metadata.id(),
+                    id: entry.metadata.instance_id(),
                     name: entry.metadata.name.clone(),
                     version: entry.metadata.version.clone(),
                     author: entry.metadata.author.clone(),
@@ -666,7 +887,7 @@ impl PluginManager {
                 };
 
                 PluginInfo {
-                    id: entry.metadata.id(),
+                    id: entry.metadata.instance_id(),
                     name: entry.metadata.name.clone(),
                     version: entry.metadata.version.clone(),
                     author: entry.metadata.author.clone(),
@@ -704,6 +925,14 @@ pub enum FormatMethod {
     DecryptChunk,
     GetMetadataReadSize,
     GetDecryptionPlan,
+    GetStreamUrl,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum UtilityMethod {
+    GetFfmpegPath,
+    GetFfprobePath,
+    CheckVersion,
 }
 
 #[cfg(test)]

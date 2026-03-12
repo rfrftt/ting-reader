@@ -446,6 +446,10 @@ pub struct BookMetadata {
     /// Narrator name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub narrator: Option<String>,
+
+    /// Subtitle (added for compatibility)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
     
     /// Book introduction/description
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -499,6 +503,7 @@ impl BookMetadata {
             title,
             author: None,
             narrator: None,
+            subtitle: None,
             intro: None,
             source,
             source_id,

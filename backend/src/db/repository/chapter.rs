@@ -74,6 +74,16 @@ impl ChapterRepository {
         }).await
     }
 
+    /// Delete chapters by book ID
+    pub async fn delete_by_book(&self, book_id: &str) -> Result<()> {
+        let book_id = book_id.to_string();
+        self.db.execute(move |conn| {
+            conn.execute("DELETE FROM chapters WHERE book_id = ?", [&book_id])
+                .map_err(TingError::DatabaseError)?;
+            Ok(())
+        }).await
+    }
+
     /// Find chapters by book ID with user progress
     pub async fn find_by_book_with_progress(
         &self, 

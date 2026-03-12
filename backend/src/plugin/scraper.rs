@@ -129,6 +129,42 @@ pub struct BookItem {
     #[serde(default)]
     pub narrator: Option<String>,
     
+    /// Subtitle (optional)
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    
+    /// Published Year (optional)
+    #[serde(default)]
+    pub published_year: Option<String>,
+    
+    /// Published Date (optional)
+    #[serde(default)]
+    pub published_date: Option<String>,
+    
+    /// Publisher (optional)
+    #[serde(default)]
+    pub publisher: Option<String>,
+    
+    /// ISBN (optional)
+    #[serde(default)]
+    pub isbn: Option<String>,
+    
+    /// ASIN (optional)
+    #[serde(default)]
+    pub asin: Option<String>,
+    
+    /// Language (optional)
+    #[serde(default)]
+    pub language: Option<String>,
+    
+    /// Explicit content
+    #[serde(default)]
+    pub explicit: Option<bool>,
+    
+    /// Abridged version
+    #[serde(default)]
+    pub abridged: Option<bool>,
+    
     /// Tags or categories
     #[serde(default)]
     pub tags: Vec<String>,
@@ -164,6 +200,42 @@ pub struct BookDetail {
     /// Cover image URL (optional)
     #[serde(default)]
     pub cover_url: Option<String>,
+    
+    /// Subtitle (optional)
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    
+    /// Published Year (optional)
+    #[serde(default)]
+    pub published_year: Option<String>,
+    
+    /// Published Date (optional)
+    #[serde(default)]
+    pub published_date: Option<String>,
+    
+    /// Publisher (optional)
+    #[serde(default)]
+    pub publisher: Option<String>,
+    
+    /// ISBN (optional)
+    #[serde(default)]
+    pub isbn: Option<String>,
+    
+    /// ASIN (optional)
+    #[serde(default)]
+    pub asin: Option<String>,
+    
+    /// Language (optional)
+    #[serde(default)]
+    pub language: Option<String>,
+    
+    /// Explicit content
+    #[serde(default)]
+    pub explicit: bool,
+    
+    /// Abridged version
+    #[serde(default)]
+    pub abridged: bool,
     
     /// Full introduction or description
     pub intro: String,

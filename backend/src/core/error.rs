@@ -89,6 +89,9 @@ pub enum TingError {
     // Event bus errors
     #[error("Event error: {0}")]
     EventError(String),
+
+    #[error("External tool error: {0}")]
+    ExternalError(String),
 }
 
 impl TingError {
@@ -130,7 +133,8 @@ impl TingError {
             | TingError::IoError(_)
             | TingError::NetworkError(_)
             | TingError::TaskError(_)
-            | TingError::EventError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            | TingError::EventError(_)
+            | TingError::ExternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
@@ -158,6 +162,7 @@ impl TingError {
             TingError::ValidationError(_) => "ValidationError",
             TingError::TaskError(_) => "TaskError",
             TingError::EventError(_) => "EventError",
+            TingError::ExternalError(_) => "ExternalError",
         }
     }
 

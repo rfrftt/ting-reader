@@ -96,6 +96,13 @@ pub struct InstallPluginRequest {
     pub path: String,
 }
 
+/// Request body for installing a plugin from the store
+#[derive(Debug, Deserialize)]
+pub struct InstallStorePluginRequest {
+    /// ID of the plugin to install
+    pub plugin_id: String,
+}
+
 /// Response for plugin installation
 #[derive(Debug, Serialize)]
 pub struct InstallPluginResponse {

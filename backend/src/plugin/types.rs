@@ -79,7 +79,13 @@ impl std::fmt::Display for PluginType {
 /// version, dependencies, and permissions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginMetadata {
-    /// Plugin name (unique identifier)
+    /// Plugin unique identifier (e.g. "ximalaya-scraper")
+    /// This is the true unique ID of the plugin.
+    #[serde(default)]
+    pub id: String,
+
+    /// Plugin display name (e.g. "Ximalaya Scraper")
+    #[serde(default)]
     pub name: String,
     
     /// Plugin version (semantic versioning)
@@ -167,6 +173,7 @@ pub enum DecryptionSegment {
 impl PluginMetadata {
     /// Create a new plugin metadata with required fields
     pub fn new(
+        id: String,
         name: String,
         version: String,
         plugin_type: PluginType,
@@ -175,6 +182,7 @@ impl PluginMetadata {
         entry_point: String,
     ) -> Self {
         Self {
+            id,
             name,
             version,
             plugin_type,
@@ -222,9 +230,9 @@ impl PluginMetadata {
         self
     }
 
-    /// Get the unique plugin ID (name@version)
-    pub fn id(&self) -> PluginId {
-        format!("{}@{}", self.name, self.version)
+    /// Get the unique plugin ID (id@version)
+    pub fn instance_id(&self) -> PluginId {
+        format!("{}@{}", self.id, self.version)
     }
 }
 

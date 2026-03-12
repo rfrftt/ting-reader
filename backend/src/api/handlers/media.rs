@@ -273,10 +273,14 @@ pub async fn proxy_cover(
     ))
 }
 
+use std::process::Stdio;
+use tokio::process::Command;
+
 /// Query parameters for stream chapter
 #[derive(Debug, serde::Deserialize)]
 pub struct StreamQuery {
     pub token: Option<String>,
+    pub transcode: Option<String>,
 }
 
 /// Handler for GET /api/stream/:chapterId - Stream chapter audio
@@ -301,6 +305,130 @@ pub async fn stream_chapter(
         
     let library = state.library_repo.find_by_id(&book.library_id).await?
         .ok_or_else(|| TingError::NotFound(format!("Library {} not found", book.library_id)))?;
+
+    // Handle Transcoding Request
+    if let Some(format) = params.transcode {
+        tracing::info!("Transcoding requested: {} -> {}", chapter.path, format);
+
+        let content_type = match format.as_str() {
+            "mp3" => "audio/mpeg",
+            "wav" => "audio/wav",
+            _ => return Err(TingError::InvalidRequest("Unsupported transcode format".to_string())),
+        };
+
+        let ffmpeg_path = state.plugin_manager.get_ffmpeg_path().await.unwrap_or("ffmpeg".to_string());
+        let cache_path = state.cache_manager.get_cache_path(&chapter_id);
+        
+        // 1. Try to get transcode command from plugin
+        let mut plugin_command: Option<Vec<String>> = None;
+        let plugin_info = state.plugin_manager.find_plugin_for_format(std::path::Path::new(&chapter.path)).await;
+        
+        if let Some(plugin) = plugin_info {
+            let res = state.plugin_manager.call_format(
+                &plugin.id,
+                FormatMethod::GetStreamUrl,
+                serde_json::json!({
+                    "file_path": chapter.path,
+                    "transcode": format
+                })
+            ).await;
+            
+            if let Ok(val) = res {
+                if let Some(cmd) = val.get("command").and_then(|c| c.as_array()) {
+                    let cmd_vec: Vec<String> = cmd.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .collect();
+                    if !cmd_vec.is_empty() {
+                        plugin_command = Some(cmd_vec);
+                        tracing::info!("Using plugin-provided transcode command for {}", chapter.path);
+                    }
+                }
+            }
+        }
+
+        let mut command = if let Some(cmd_vec) = plugin_command {
+            let mut cmd = Command::new(&cmd_vec[0]);
+            cmd.args(&cmd_vec[1..]);
+            
+            // If the plugin command uses "-" or "pipe:0" for input, we need to enable stdin pipe
+            // The plugin should return "-" as input argument for piped input
+            let use_pipe = !cache_path.exists() && library.library_type != "local";
+            if use_pipe {
+                cmd.stdin(Stdio::piped());
+            }
+            cmd
+        } else {
+            // Fallback to hardcoded logic
+            let mut cmd = Command::new(&ffmpeg_path);
+            cmd
+                .arg("-y")
+                .arg("-loglevel")
+                .arg("error")
+                .arg("-i");
+                
+            // Input Source
+            let _use_pipe_fallback = !cache_path.exists() && library.library_type != "local";
+            
+            if cache_path.exists() {
+                cmd.arg(cache_path.to_string_lossy().as_ref());
+            } else if library.library_type == "local" {
+                cmd.arg(&chapter.path);
+            } else {
+                // Pipe input
+                cmd.arg("-");
+                cmd.stdin(Stdio::piped());
+            }
+            
+            // Explicitly set audio codec for mp3
+            if format == "mp3" {
+                cmd.arg("-acodec").arg("libmp3lame");
+                cmd.arg("-q:a").arg("4"); // VBR Quality ~160kbps, good balance
+            }
+
+            cmd
+                .arg("-f")
+                .arg(&format)
+                .arg("-");
+            cmd
+        };
+            
+        command.stdout(Stdio::piped());
+        
+        // Spawn
+        let mut child = command.spawn().map_err(|e| TingError::IoError(e))?;
+        
+        // Handle input pipe if needed (Only if we are using the fallback pipe logic)
+        let use_pipe = !cache_path.exists() && library.library_type != "local";
+        if use_pipe && child.stdin.is_some() {
+            if let Some(mut stdin) = child.stdin.take() {
+                // Get reader
+                let (mut reader, _) = state.storage_service.get_webdav_reader(&library, &chapter.path, None, state.encryption_key.as_ref()).await
+                    .map_err(|e| TingError::NotFound(format!("WebDAV file not found: {}", e)))?;
+                    
+                tokio::spawn(async move {
+                    if let Err(e) = tokio::io::copy(&mut reader, &mut stdin).await {
+                         tracing::error!("Failed to pipe input to ffmpeg: {}", e);
+                    }
+                });
+            }
+        }
+        
+        let stdout = child.stdout.take().ok_or_else(|| TingError::IoError(std::io::Error::new(std::io::ErrorKind::Other, "Failed to capture ffmpeg stdout")))?;
+        
+        let stream = ReaderStream::new(stdout);
+        let body = Body::from_stream(stream);
+        
+        return Ok((
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, content_type.to_string()),
+                (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
+                ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
+            ],
+            body,
+        ).into_response());
+    }
 
     // Auto Preload / Cache Logic
     if let Some(user) = user {

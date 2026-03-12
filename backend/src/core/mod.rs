@@ -25,6 +25,8 @@ pub mod library_scanner;
 pub mod color;
 pub mod storage;
 pub mod merge_service;
+pub mod metadata_writer;
+
 pub mod utils;
 
 pub use services::{BookService, ScraperService, FormatService};

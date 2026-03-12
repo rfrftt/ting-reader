@@ -391,6 +391,41 @@ impl ScraperService {
         Ok(active_sources[0].id.clone())
     }
     
+    /// Execute plugin call with retry mechanism (3 attempts, exponential backoff)
+    async fn call_plugin_with_retry(
+        &self,
+        source_id: &str,
+        method: crate::plugin::manager::ScraperMethod,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let mut attempts = 0;
+        let max_attempts = 3;
+        let mut delay = Duration::from_secs(1);
+
+        loop {
+            attempts += 1;
+            match tokio::time::timeout(Duration::from_secs(30), self.plugin_manager.call_scraper(&source_id.to_string(), method.clone(), params.clone()))
+                .await
+                .map_err(|_| TingError::PluginExecutionError(format!("Plugin {} timed out", source_id)))
+                .and_then(|res| res) {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    // Only retry on network/timeout related errors if possible
+                    // For now, we retry on all errors as plugin errors might be generic
+                    if attempts >= max_attempts {
+                        return Err(TingError::PluginExecutionError(
+                            format!("Plugin {} failed after {} attempts: {}", source_id, attempts, e)
+                        ));
+                    }
+                    tracing::warn!("Plugin {} failed (attempt {}/{}): {}. Retrying in {:?}...", 
+                        source_id, attempts, max_attempts, e, delay);
+                    tokio::time::sleep(delay).await;
+                    delay *= 2; // Exponential backoff
+                }
+            }
+        }
+    }
+
     /// Search for books using a specific scraper or the best available scraper
     pub async fn search(
         &self,
@@ -526,15 +561,17 @@ impl ScraperService {
             "book_id": book_id,
         });
         
-        let result = self.plugin_manager
-            .call_scraper(&source_id, ScraperMethod::GetDetail, params)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to get book detail from {}: {}", source_id, e);
-                TingError::PluginExecutionError(
-                    format!("Failed to get book detail: {}", e)
-                )
-            })?;
+        let result = self.call_plugin_with_retry(
+            &source_id, 
+            ScraperMethod::GetDetail, 
+            params
+        ).await
+        .map_err(|e| {
+            tracing::error!("Failed to get book detail from {}: {}", source_id, e);
+            TingError::PluginExecutionError(
+                format!("Failed to get book detail: {}", e)
+            )
+        })?;
         
         // Parse result
         let book_detail: crate::plugin::scraper::BookDetail = 
@@ -695,6 +732,15 @@ impl ScraperService {
                             tags: item.tags.clone(),
                             chapter_count: item.chapter_count.unwrap_or(0),
                             duration: item.duration.clone(),
+                            subtitle: item.subtitle.clone(),
+                            published_year: item.published_year.clone(),
+                            published_date: item.published_date.clone(),
+                            publisher: item.publisher.clone(),
+                            isbn: item.isbn.clone(),
+                            asin: item.asin.clone(),
+                            language: item.language.clone(),
+                            explicit: item.explicit.unwrap_or(false),
+                            abridged: item.abridged.unwrap_or(false),
                         };
                         
                         source_results.insert(source_id, detail);
@@ -721,6 +767,15 @@ impl ScraperService {
             tags: vec![],
             chapter_count: 0,
             duration: None,
+            subtitle: None,
+            published_year: None,
+            published_date: None,
+            publisher: None,
+            isbn: None,
+            asin: None,
+            language: None,
+            explicit: false,
+            abridged: false,
         };
         
         // Helper to get effective sources (specific + default fallback)
@@ -806,6 +861,96 @@ impl ScraperService {
             if let Some(detail) = source_results.get(source) {
                 if !detail.tags.is_empty() {
                     final_detail.tags = detail.tags.clone();
+                    break;
+                }
+            }
+        }
+
+        // Subtitle
+        for source in &config.default_sources {
+            if let Some(detail) = source_results.get(source) {
+                if detail.subtitle.is_some() {
+                    final_detail.subtitle = detail.subtitle.clone();
+                    break;
+                }
+            }
+        }
+
+        // Published Year
+        for source in &config.default_sources {
+            if let Some(detail) = source_results.get(source) {
+                if detail.published_year.is_some() {
+                    final_detail.published_year = detail.published_year.clone();
+                    break;
+                }
+            }
+        }
+
+        // Published Date
+        for source in &config.default_sources {
+            if let Some(detail) = source_results.get(source) {
+                if detail.published_date.is_some() {
+                    final_detail.published_date = detail.published_date.clone();
+                    break;
+                }
+            }
+        }
+
+        // Publisher
+        for source in &config.default_sources {
+            if let Some(detail) = source_results.get(source) {
+                if detail.publisher.is_some() {
+                    final_detail.publisher = detail.publisher.clone();
+                    break;
+                }
+            }
+        }
+
+        // ISBN
+        for source in &config.default_sources {
+            if let Some(detail) = source_results.get(source) {
+                if detail.isbn.is_some() {
+                    final_detail.isbn = detail.isbn.clone();
+                    break;
+                }
+            }
+        }
+
+        // ASIN
+        for source in &config.default_sources {
+            if let Some(detail) = source_results.get(source) {
+                if detail.asin.is_some() {
+                    final_detail.asin = detail.asin.clone();
+                    break;
+                }
+            }
+        }
+
+        // Language
+        for source in &config.default_sources {
+            if let Some(detail) = source_results.get(source) {
+                if detail.language.is_some() {
+                    final_detail.language = detail.language.clone();
+                    break;
+                }
+            }
+        }
+
+        // Explicit
+        for source in &config.default_sources {
+            if let Some(detail) = source_results.get(source) {
+                if detail.explicit {
+                    final_detail.explicit = true;
+                    break;
+                }
+            }
+        }
+
+        // Abridged
+        for source in &config.default_sources {
+            if let Some(detail) = source_results.get(source) {
+                if detail.abridged {
+                    final_detail.abridged = true;
                     break;
                 }
             }

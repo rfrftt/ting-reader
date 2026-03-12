@@ -26,6 +26,7 @@ pub mod registry;
 pub mod runtime;
 pub mod sandbox;
 pub mod scraper;
+pub mod store;
 pub mod types;
 pub mod utility;
 
@@ -44,6 +45,7 @@ pub use registry::{PluginRegistry, PluginEntry};
 pub use runtime::{WasmRuntime, WasmPlugin};
 pub use sandbox::{Sandbox, Permission, ResourceLimits, FileAccess};
 pub use scraper::{ScraperPlugin, SearchResult, BookItem, BookDetail, Chapter};
+pub use store::{StorePlugin, StoreDownload};
 pub use types::{Plugin, PluginType, PluginMetadata, PluginId, PluginState, PluginStats};
 pub use utility::{
     UtilityPlugin, Capability, Endpoint, HttpMethod, Request, Response,

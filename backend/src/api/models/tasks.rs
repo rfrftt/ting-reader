@@ -112,3 +112,42 @@ pub struct CancelTaskResponse {
     /// Success message
     pub message: String,
 }
+
+/// Response for task deletion
+#[derive(Debug, Serialize)]
+pub struct DeleteTaskResponse {
+    /// Success message
+    pub message: String,
+}
+
+/// Query parameters for clearing tasks
+#[derive(Debug, Deserialize)]
+pub struct ClearTasksQuery {
+    /// Filter by status (queued, running, completed, failed, cancelled)
+    pub status: Option<String>,
+}
+
+/// Response for clearing tasks
+#[derive(Debug, Serialize)]
+pub struct ClearTasksResponse {
+    /// Success message
+    pub message: String,
+    /// Number of tasks cleared
+    pub count: usize,
+}
+
+/// Request for batch deleting tasks
+#[derive(Debug, Deserialize)]
+pub struct BatchDeleteTasksRequest {
+    /// List of task IDs to delete
+    pub ids: Vec<String>,
+}
+
+/// Response for batch deleting tasks
+#[derive(Debug, Serialize)]
+pub struct BatchDeleteTasksResponse {
+    /// Success message
+    pub message: String,
+    /// Number of tasks deleted
+    pub count: usize,
+}

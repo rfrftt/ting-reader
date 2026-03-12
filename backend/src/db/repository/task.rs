@@ -246,6 +246,37 @@ impl TaskRepository {
             Ok(())
         }).await
     }
+
+    pub async fn delete_all(&self) -> Result<()> {
+        self.db.execute(move |conn| {
+            conn.execute("DELETE FROM tasks", [])
+                .map_err(TingError::DatabaseError)?;
+            Ok(())
+        }).await
+    }
+
+    pub async fn delete_by_status(&self, status: &str) -> Result<()> {
+        let status = status.to_string();
+        self.db.execute(move |conn| {
+            conn.execute("DELETE FROM tasks WHERE status = ?", [&status])
+                .map_err(TingError::DatabaseError)?;
+            Ok(())
+        }).await
+    }
+
+    pub async fn delete_batch(&self, ids: Vec<String>) -> Result<usize> {
+        self.db.transaction(move |tx| {
+            let mut count = 0;
+            {
+                // Only delete non-running tasks for safety
+                let mut stmt = tx.prepare("DELETE FROM tasks WHERE id = ? AND status != 'running'").map_err(TingError::DatabaseError)?;
+                for id in &ids {
+                    count += stmt.execute([id]).map_err(TingError::DatabaseError)?;
+                }
+            }
+            Ok(count)
+        }).await
+    }
 }
 
 #[async_trait]

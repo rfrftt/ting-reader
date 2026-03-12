@@ -1,5 +1,7 @@
 use crate::api::models::{
     TasksQuery, TaskInfoResponse, TaskDetailResponse, CancelTaskResponse,
+    DeleteTaskResponse, ClearTasksQuery, ClearTasksResponse,
+    BatchDeleteTasksRequest, BatchDeleteTasksResponse,
     HealthResponse, HealthStatus, ComponentsHealth, ComponentStatus, ComponentHealth,
     MetricsResponse, SystemMetrics, PluginMetrics, TaskQueueMetrics, DatabaseMetrics,
     ConfigResponse, ServerConfigResponse, DatabaseConfigResponse,
@@ -115,6 +117,59 @@ pub async fn cancel_task(
 
     Ok(Json(CancelTaskResponse {
         message: format!("Task {} cancelled successfully", id),
+    }))
+}
+
+/// Handler for DELETE /api/v1/tasks/:id - Delete a task
+pub async fn delete_task(
+    State(state): State<AppState>,
+    user: crate::auth::middleware::AuthUser,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse> {
+    if user.role != "admin" {
+        return Err(TingError::PermissionDenied("Admin access required".to_string()));
+    }
+
+    state.task_queue.delete_task(&id).await?;
+
+    Ok(Json(DeleteTaskResponse {
+        message: format!("Task {} deleted successfully", id),
+    }))
+}
+
+/// Handler for DELETE /api/v1/tasks - Clear tasks
+pub async fn clear_tasks(
+    State(state): State<AppState>,
+    user: crate::auth::middleware::AuthUser,
+    Query(query): Query<ClearTasksQuery>,
+) -> Result<impl IntoResponse> {
+    if user.role != "admin" {
+        return Err(TingError::PermissionDenied("Admin access required".to_string()));
+    }
+
+    let count = state.task_queue.clear_tasks(query.status).await?;
+
+    Ok(Json(ClearTasksResponse {
+        message: format!("Cleared {} tasks", count),
+        count,
+    }))
+}
+
+/// Handler for POST /api/v1/tasks/batch-delete - Batch delete tasks
+pub async fn batch_delete_tasks(
+    State(state): State<AppState>,
+    user: crate::auth::middleware::AuthUser,
+    Json(req): Json<BatchDeleteTasksRequest>,
+) -> Result<impl IntoResponse> {
+    if user.role != "admin" {
+        return Err(TingError::PermissionDenied("Admin access required".to_string()));
+    }
+
+    let count = state.task_queue.delete_tasks(req.ids).await?;
+
+    Ok(Json(BatchDeleteTasksResponse {
+        message: format!("Deleted {} tasks", count),
+        count,
     }))
 }
 

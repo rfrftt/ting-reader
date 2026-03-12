@@ -103,6 +103,7 @@ impl Default for StreamerConfig {
                 AudioFormat::M4a,
                 AudioFormat::Aac,
                 AudioFormat::Flac,
+                AudioFormat::Wma, // Add Wma support explicitly
             ],
         }
     }

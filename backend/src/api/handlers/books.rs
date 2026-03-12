@@ -254,32 +254,102 @@ pub async fn update_book(
 
     // Check NFO writing
     if let Ok(Some(library)) = state.library_repo.find_by_id(&updated_book.library_id).await {
-        if library.library_type == "local" {
-            let config: crate::db::models::ScraperConfig = library.scraper_config
-                .as_ref()
-                .and_then(|json| serde_json::from_str(json).ok())
-                .unwrap_or_default();
-                
-            if config.nfo_writing_enabled {
-                let mut metadata = BookMetadata::new(
-                    updated_book.title.clone().unwrap_or_default(),
-                    "ting-reader".to_string(),
-                    updated_book.id.clone(),
-                    0,
-                );
-                metadata.author = updated_book.author.clone();
-                metadata.narrator = updated_book.narrator.clone();
-                metadata.intro = updated_book.description.clone();
-                metadata.cover_url = updated_book.cover_url.clone();
-                if let Some(tags_str) = &updated_book.tags {
-                     metadata.tags.items = tags_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        let config: crate::db::models::ScraperConfig = library.scraper_config
+            .as_ref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+            
+        // Handle NFO writing (Local & WebDAV)
+        if config.nfo_writing_enabled {
+            let mut metadata = BookMetadata::new(
+                updated_book.title.clone().unwrap_or_default(),
+                "ting-reader".to_string(),
+                updated_book.id.clone(),
+                0,
+            );
+            metadata.author = updated_book.author.clone();
+            metadata.narrator = updated_book.narrator.clone();
+            metadata.intro = updated_book.description.clone();
+            metadata.cover_url = updated_book.cover_url.clone();
+            if let Some(tags_str) = &updated_book.tags {
+                 metadata.tags.items = tags_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            }
+            metadata.touch(); // Update timestamp
+            
+            // Determine path
+            let target_dir = if library.library_type == "webdav" {
+                // WebDAV uses hash-based temp dir
+                let mut hasher = sha2::Sha256::new();
+                use sha2::Digest;
+                hasher.update(updated_book.path.as_bytes()); // updated_book.path is the WebDAV URL
+                let book_hash = format!("{:x}", hasher.finalize());
+                let temp_book_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join("temp").join(&book_hash);
+                if !temp_book_dir.exists() { std::fs::create_dir_all(&temp_book_dir).ok(); }
+                temp_book_dir
+            } else {
+                std::path::PathBuf::from(&updated_book.path)
+            };
+            
+            if let Err(e) = state.nfo_manager.write_book_nfo_to_dir(&target_dir, &metadata) {
+                tracing::warn!("Failed to write NFO for book {}: {}", updated_book.title.as_deref().unwrap_or("?"), e);
+            }
+        }
+
+        // Handle metadata.json writing
+        if config.metadata_writing_enabled {
+            // Read existing metadata.json to preserve extended fields
+            let target_dir = if library.library_type == "webdav" {
+                let mut hasher = sha2::Sha256::new();
+                use sha2::Digest;
+                hasher.update(updated_book.path.as_bytes());
+                let book_hash = format!("{:x}", hasher.finalize());
+                let temp_book_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join("temp").join(&book_hash);
+                if !temp_book_dir.exists() { std::fs::create_dir_all(&temp_book_dir).ok(); }
+                temp_book_dir
+            } else {
+                std::path::PathBuf::from(&updated_book.path)
+            };
+
+            let mut metadata_json = crate::core::metadata_writer::read_metadata_json(&target_dir).unwrap_or(None).unwrap_or_default();
+            
+            // Update fields from book record
+            metadata_json.title = updated_book.title.clone();
+            metadata_json.authors = updated_book.author.clone().map(|s| vec![s]).unwrap_or_default();
+            metadata_json.narrators = updated_book.narrator.clone().map(|s| vec![s]).unwrap_or_default();
+            metadata_json.description = updated_book.description.clone();
+            metadata_json.genres = updated_book.tags.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
+            
+            // Sync chapters from DB
+            let chapter_repo = ChapterRepository::new(state.book_repo.db().clone());
+            if let Ok(chapters) = chapter_repo.find_by_book(&updated_book.id).await {
+                let mut sorted_chapters = chapters;
+                sorted_chapters.sort_by(|a, b| {
+                    a.chapter_index.unwrap_or(0).cmp(&b.chapter_index.unwrap_or(0))
+                        .then_with(|| natord::compare(a.title.as_deref().unwrap_or(""), b.title.as_deref().unwrap_or("")))
+                });
+
+                let mut abs_chapters = Vec::new();
+                let mut current_time = 0.0;
+                for (idx, ch) in sorted_chapters.iter().enumerate() {
+                    let duration = ch.duration.unwrap_or(0) as f64;
+                    abs_chapters.push(crate::core::metadata_writer::AudiobookshelfChapter {
+                        id: idx as u32,
+                        start: current_time,
+                        end: current_time + duration,
+                        title: ch.title.clone().unwrap_or_default(),
+                    });
+                    current_time += duration;
                 }
-                metadata.touch(); // Update timestamp
-                
-                let book_path = std::path::Path::new(&updated_book.path);
-                if let Err(e) = state.nfo_manager.write_book_nfo_to_dir(book_path, &metadata) {
-                    tracing::warn!("Failed to write NFO for book {}: {}", updated_book.title.as_deref().unwrap_or("?"), e);
-                }
+                metadata_json.chapters = abs_chapters;
+            }
+            
+            // Subtitle is now in metadata.json but not in Book struct, so we preserve what was read.
+            // If request had extended fields (not supported in UpdateBookRequest yet), we would update them here.
+            
+            if let Err(e) = crate::core::metadata_writer::write_metadata_json(&target_dir, &metadata_json) {
+                tracing::warn!("Failed to write metadata.json for book {}: {}", updated_book.title.as_deref().unwrap_or("?"), e);
             }
         }
     }
@@ -377,32 +447,65 @@ pub async fn scrape_book(
 
     // Check NFO writing
     if let Ok(Some(library)) = state.library_repo.find_by_id(&updated_book.library_id).await {
-        if library.library_type == "local" {
-            let config: crate::db::models::ScraperConfig = library.scraper_config
-                .as_ref()
-                .and_then(|json| serde_json::from_str(json).ok())
-                .unwrap_or_default();
-                
-            if config.nfo_writing_enabled {
-                let mut metadata = BookMetadata::new(
-                    updated_book.title.clone().unwrap_or_default(),
-                    "ting-reader".to_string(),
-                    updated_book.id.clone(),
-                    0,
-                );
-                metadata.author = updated_book.author.clone();
-                metadata.narrator = updated_book.narrator.clone();
-                metadata.intro = updated_book.description.clone();
-                metadata.cover_url = updated_book.cover_url.clone();
-                if let Some(tags_str) = &updated_book.tags {
-                     metadata.tags.items = tags_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-                }
-                metadata.touch();
-                
-                let book_path = std::path::Path::new(&updated_book.path);
-                if let Err(e) = state.nfo_manager.write_book_nfo_to_dir(book_path, &metadata) {
-                    tracing::warn!("Failed to write NFO for book {}: {}", updated_book.title.as_deref().unwrap_or("?"), e);
-                }
+        let config: crate::db::models::ScraperConfig = library.scraper_config
+            .as_ref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+            
+        // Determine path (shared for NFO and metadata.json)
+        let target_dir = if library.library_type == "webdav" {
+            // WebDAV uses hash-based temp dir
+            let mut hasher = sha2::Sha256::new();
+            use sha2::Digest;
+            hasher.update(updated_book.path.as_bytes());
+            let book_hash = format!("{:x}", hasher.finalize());
+            let temp_book_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .join("temp").join(&book_hash);
+            if !temp_book_dir.exists() { std::fs::create_dir_all(&temp_book_dir).ok(); }
+            temp_book_dir
+        } else {
+            std::path::PathBuf::from(&updated_book.path)
+        };
+
+        // Handle NFO writing (Local & WebDAV)
+        if config.nfo_writing_enabled {
+            let mut metadata = BookMetadata::new(
+                updated_book.title.clone().unwrap_or_default(),
+                "ting-reader".to_string(),
+                updated_book.id.clone(),
+                0,
+            );
+            metadata.author = updated_book.author.clone();
+            metadata.narrator = updated_book.narrator.clone();
+            metadata.intro = updated_book.description.clone();
+            metadata.cover_url = updated_book.cover_url.clone();
+            if let Some(tags_str) = &updated_book.tags {
+                 metadata.tags.items = tags_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            }
+            metadata.touch(); // Update timestamp
+            
+            if let Err(e) = state.nfo_manager.write_book_nfo_to_dir(&target_dir, &metadata) {
+                tracing::warn!("Failed to write NFO for book {}: {}", updated_book.title.as_deref().unwrap_or("?"), e);
+            }
+        }
+
+        // Handle metadata.json writing
+        if config.metadata_writing_enabled {
+            // Read existing metadata.json to preserve extended fields
+            let mut metadata_json = crate::core::metadata_writer::read_metadata_json(&target_dir).unwrap_or(None).unwrap_or_default();
+            
+            // Update fields from book record
+            metadata_json.title = updated_book.title.clone();
+            metadata_json.authors = updated_book.author.clone().map(|s| vec![s]).unwrap_or_default();
+            metadata_json.narrators = updated_book.narrator.clone().map(|s| vec![s]).unwrap_or_default();
+            metadata_json.description = updated_book.description.clone();
+            metadata_json.genres = updated_book.tags.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
+            
+            // Subtitle is now in metadata.json but not in Book struct, so we preserve what was read.
+            // If request had extended fields (not supported in UpdateBookRequest yet), we would update them here.
+            
+            if let Err(e) = crate::core::metadata_writer::write_metadata_json(&target_dir, &metadata_json) {
+                tracing::warn!("Failed to write metadata.json for book {}: {}", updated_book.title.as_deref().unwrap_or("?"), e);
             }
         }
     }
@@ -516,6 +619,62 @@ pub async fn update_chapter(
     };
 
     chapter_repo.update(&updated_chapter).await?;
+
+    // Regenerate metadata.json if enabled
+    let book = state.book_repo.find_by_id(&updated_chapter.book_id).await?
+        .ok_or_else(|| TingError::NotFound(format!("Book with id {} not found", updated_chapter.book_id)))?;
+    
+    if let Ok(Some(library)) = state.library_repo.find_by_id(&book.library_id).await {
+        let config: crate::db::models::ScraperConfig = library.scraper_config
+            .as_ref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+            
+        if config.metadata_writing_enabled {
+            // Determine path
+            let target_dir = if library.library_type == "webdav" {
+                let mut hasher = sha2::Sha256::new();
+                use sha2::Digest;
+                hasher.update(book.path.as_bytes());
+                let book_hash = format!("{:x}", hasher.finalize());
+                let temp_book_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join("temp").join(&book_hash);
+                if !temp_book_dir.exists() { std::fs::create_dir_all(&temp_book_dir).ok(); }
+                temp_book_dir
+            } else {
+                std::path::PathBuf::from(&book.path)
+            };
+
+            let mut metadata_json = crate::core::metadata_writer::read_metadata_json(&target_dir).unwrap_or(None).unwrap_or_default();
+            
+            // Sync chapters from DB
+            if let Ok(chapters) = chapter_repo.find_by_book(&book.id).await {
+                let mut sorted_chapters = chapters;
+                sorted_chapters.sort_by(|a, b| {
+                    a.chapter_index.unwrap_or(0).cmp(&b.chapter_index.unwrap_or(0))
+                        .then_with(|| natord::compare(a.title.as_deref().unwrap_or(""), b.title.as_deref().unwrap_or("")))
+                });
+
+                let mut abs_chapters = Vec::new();
+                let mut current_time = 0.0;
+                for (idx, ch) in sorted_chapters.iter().enumerate() {
+                    let duration = ch.duration.unwrap_or(0) as f64;
+                    abs_chapters.push(crate::core::metadata_writer::AudiobookshelfChapter {
+                        id: idx as u32,
+                        start: current_time,
+                        end: current_time + duration,
+                        title: ch.title.clone().unwrap_or_default(),
+                    });
+                    current_time += duration;
+                }
+                metadata_json.chapters = abs_chapters;
+            }
+            
+            if let Err(e) = crate::core::metadata_writer::write_metadata_json(&target_dir, &metadata_json) {
+                tracing::warn!("Failed to write metadata.json for chapter update {}: {}", updated_chapter.title.as_deref().unwrap_or("?"), e);
+            }
+        }
+    }
 
     Ok(Json(ChapterResponse::from(updated_chapter)))
 }
@@ -661,6 +820,62 @@ pub async fn batch_update_chapters(
         }
     }
 
+    // Regenerate metadata.json if enabled
+    let book = state.book_repo.find_by_id(&id).await?
+        .ok_or_else(|| TingError::NotFound(format!("Book with id {} not found", id)))?;
+
+    if let Ok(Some(library)) = state.library_repo.find_by_id(&book.library_id).await {
+        let config: crate::db::models::ScraperConfig = library.scraper_config
+            .as_ref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+            
+        if config.metadata_writing_enabled {
+            // Determine path
+            let target_dir = if library.library_type == "webdav" {
+                let mut hasher = sha2::Sha256::new();
+                use sha2::Digest;
+                hasher.update(book.path.as_bytes());
+                let book_hash = format!("{:x}", hasher.finalize());
+                let temp_book_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join("temp").join(&book_hash);
+                if !temp_book_dir.exists() { std::fs::create_dir_all(&temp_book_dir).ok(); }
+                temp_book_dir
+            } else {
+                std::path::PathBuf::from(&book.path)
+            };
+
+            let mut metadata_json = crate::core::metadata_writer::read_metadata_json(&target_dir).unwrap_or(None).unwrap_or_default();
+            
+            // Sync chapters from DB
+            if let Ok(chapters) = chapter_repo.find_by_book(&book.id).await {
+                let mut sorted_chapters = chapters;
+                sorted_chapters.sort_by(|a, b| {
+                    a.chapter_index.unwrap_or(0).cmp(&b.chapter_index.unwrap_or(0))
+                        .then_with(|| natord::compare(a.title.as_deref().unwrap_or(""), b.title.as_deref().unwrap_or("")))
+                });
+
+                let mut abs_chapters = Vec::new();
+                let mut current_time = 0.0;
+                for (idx, ch) in sorted_chapters.iter().enumerate() {
+                    let duration = ch.duration.unwrap_or(0) as f64;
+                    abs_chapters.push(crate::core::metadata_writer::AudiobookshelfChapter {
+                        id: idx as u32,
+                        start: current_time,
+                        end: current_time + duration,
+                        title: ch.title.clone().unwrap_or_default(),
+                    });
+                    current_time += duration;
+                }
+                metadata_json.chapters = abs_chapters;
+            }
+            
+            if let Err(e) = crate::core::metadata_writer::write_metadata_json(&target_dir, &metadata_json) {
+                tracing::warn!("Failed to write metadata.json for batch update {}: {}", book.title.as_deref().unwrap_or("?"), e);
+            }
+        }
+    }
+
     Ok(Json(serde_json::json!({
         "message": "Chapters updated successfully"
     })))
@@ -740,6 +955,15 @@ pub async fn scrape_book_diff(
         tags: best_match.tags.clone(),
         chapter_count: best_match.chapter_count.unwrap_or(0),
         duration: best_match.duration,
+        subtitle: best_match.subtitle.clone(),
+        published_year: best_match.published_year.clone(),
+        published_date: best_match.published_date.clone(),
+        publisher: best_match.publisher.clone(),
+        isbn: best_match.isbn.clone(),
+        asin: best_match.asin.clone(),
+        language: best_match.language.clone(),
+        explicit: best_match.explicit.unwrap_or(false),
+        abridged: best_match.abridged.unwrap_or(false),
     };
     
     // 4. Handle Specific Field Sources (Merge Strategy)
@@ -950,36 +1174,101 @@ pub async fn apply_scrape_result(
         state.book_repo.update(&book).await?;
 
         // Check NFO writing
-        if let Ok(Some(library)) = state.library_repo.find_by_id(&book.library_id).await {
-            if library.library_type == "local" {
-                let config: crate::db::models::ScraperConfig = library.scraper_config
-                    .as_ref()
-                    .and_then(|json| serde_json::from_str(json).ok())
-                    .unwrap_or_default();
-                    
-                if config.nfo_writing_enabled {
-                    let mut metadata = BookMetadata::new(
-                        book.title.clone().unwrap_or_default(),
-                        "ting-reader".to_string(),
-                        book.id.clone(),
-                        0,
-                    );
-                    metadata.author = book.author.clone();
-                    metadata.narrator = book.narrator.clone();
-                    metadata.intro = book.description.clone();
-                    metadata.cover_url = book.cover_url.clone();
-                    if let Some(tags_str) = &book.tags {
-                         metadata.tags.items = tags_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-                    }
-                    metadata.touch();
-                    
-                    let book_path = std::path::Path::new(&book.path);
-                    if let Err(e) = state.nfo_manager.write_book_nfo_to_dir(book_path, &metadata) {
-                        tracing::warn!("Failed to write NFO for book {}: {}", book.title.as_deref().unwrap_or("?"), e);
-                    }
-                }
+    if let Ok(Some(library)) = state.library_repo.find_by_id(&book.library_id).await {
+        let config: crate::db::models::ScraperConfig = library.scraper_config
+            .as_ref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+            
+        // Determine path (shared for NFO and metadata.json)
+        let target_dir = if library.library_type == "webdav" {
+            // WebDAV uses hash-based temp dir
+            let mut hasher = sha2::Sha256::new();
+            use sha2::Digest;
+            hasher.update(book.path.as_bytes());
+            let book_hash = format!("{:x}", hasher.finalize());
+            let temp_book_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .join("temp").join(&book_hash);
+            if !temp_book_dir.exists() { std::fs::create_dir_all(&temp_book_dir).ok(); }
+            temp_book_dir
+        } else {
+            std::path::PathBuf::from(&book.path)
+        };
+
+        // Handle NFO writing (Local & WebDAV)
+        if config.nfo_writing_enabled {
+            let mut metadata = BookMetadata::new(
+                book.title.clone().unwrap_or_default(),
+                "ting-reader".to_string(),
+                book.id.clone(),
+                0,
+            );
+            metadata.author = book.author.clone();
+            metadata.narrator = book.narrator.clone();
+            metadata.intro = book.description.clone();
+            metadata.cover_url = book.cover_url.clone();
+            if let Some(tags_str) = &book.tags {
+                 metadata.tags.items = tags_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            }
+            metadata.touch();
+            
+            if let Err(e) = state.nfo_manager.write_book_nfo_to_dir(&target_dir, &metadata) {
+                tracing::warn!("Failed to write NFO for book {}: {}", book.title.as_deref().unwrap_or("?"), e);
             }
         }
+
+        // Handle metadata.json writing
+        if config.metadata_writing_enabled {
+            // Read existing metadata.json to preserve extended fields
+            let mut metadata_json = crate::core::metadata_writer::read_metadata_json(&target_dir).unwrap_or(None).unwrap_or_default();
+            
+            // Update fields from book record
+            metadata_json.title = book.title.clone();
+            metadata_json.authors = book.author.clone().map(|s| vec![s]).unwrap_or_default();
+            metadata_json.narrators = book.narrator.clone().map(|s| vec![s]).unwrap_or_default();
+            metadata_json.description = book.description.clone();
+            metadata_json.genres = book.tags.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
+            
+            // Sync chapters from DB
+            let chapter_repo = ChapterRepository::new(state.book_repo.db().clone());
+            if let Ok(chapters) = chapter_repo.find_by_book(&book.id).await {
+                let mut sorted_chapters = chapters;
+                sorted_chapters.sort_by(|a, b| {
+                    a.chapter_index.unwrap_or(0).cmp(&b.chapter_index.unwrap_or(0))
+                        .then_with(|| natord::compare(a.title.as_deref().unwrap_or(""), b.title.as_deref().unwrap_or("")))
+                });
+
+                let mut abs_chapters = Vec::new();
+                let mut current_time = 0.0;
+                for (idx, ch) in sorted_chapters.iter().enumerate() {
+                    let duration = ch.duration.unwrap_or(0) as f64;
+                    abs_chapters.push(crate::core::metadata_writer::AudiobookshelfChapter {
+                        id: idx as u32,
+                        start: current_time,
+                        end: current_time + duration,
+                        title: ch.title.clone().unwrap_or_default(),
+                    });
+                    current_time += duration;
+                }
+                metadata_json.chapters = abs_chapters;
+            }
+            
+            // Apply scraped extended fields if available
+            if !detail.subtitle.is_none() { metadata_json.subtitle = detail.subtitle.clone(); }
+            if !detail.published_year.is_none() { metadata_json.published_year = detail.published_year.clone(); }
+            if !detail.published_date.is_none() { metadata_json.published_date = detail.published_date.clone(); }
+            if !detail.publisher.is_none() { metadata_json.publisher = detail.publisher.clone(); }
+            if !detail.isbn.is_none() { metadata_json.isbn = detail.isbn.clone(); }
+            if !detail.asin.is_none() { metadata_json.asin = detail.asin.clone(); }
+            if !detail.language.is_none() { metadata_json.language = detail.language.clone(); }
+            if detail.explicit { metadata_json.explicit = true; }
+            if detail.abridged { metadata_json.abridged = true; }
+            
+            if let Err(e) = crate::core::metadata_writer::write_metadata_json(&target_dir, &metadata_json) {
+                tracing::warn!("Failed to write metadata.json for book {}: {}", book.title.as_deref().unwrap_or("?"), e);
+            }
+        }
+    }
     }
     
     // Handle chapter updates if any (req.apply_chapters)

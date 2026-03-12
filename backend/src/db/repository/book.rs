@@ -61,6 +61,31 @@ impl BookRepository {
         }).await
     }
     
+    /// Find books by library ID with minimal fields (id, path, hash, manual_corrected, match_pattern)
+    pub async fn find_all_minimal_by_library(&self, library_id: &str) -> Result<Vec<(String, String, String, i32, Option<String>)>> {
+        let library_id = library_id.to_string();
+        self.db.execute(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, path, hash, manual_corrected, match_pattern \
+                 FROM books WHERE library_id = ?"
+            ).map_err(TingError::DatabaseError)?;
+            
+            let books = stmt.query_map([&library_id], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3).unwrap_or(0),
+                    row.get(4).unwrap_or(None),
+                ))
+            }).map_err(TingError::DatabaseError)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(TingError::DatabaseError)?;
+            
+            Ok(books)
+        }).await
+    }
+
     /// Find a book by its hash
     pub async fn find_by_hash(&self, hash: &str) -> Result<Option<Book>> {
         let hash = hash.to_string();

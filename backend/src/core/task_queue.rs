@@ -616,9 +616,8 @@ impl TaskQueue {
             .ok_or_else(|| TingError::NotFound(format!("Task not found: {}", task_id)))?;
 
         if task_record.status == TaskStatus::Running.as_str() {
-            return Err(TingError::TaskError(
-                "Cannot cancel running task".to_string(),
-            ));
+            // Allow cancelling running tasks - the executor will pick this up
+            info!(task_id = %task_id, "Marking running task as cancelled");
         }
 
         task_record.status = TaskStatus::Cancelled.as_str().to_string();
@@ -674,6 +673,68 @@ impl TaskQueue {
             .find_by_id(task_id)
             .await?
             .ok_or_else(|| TingError::NotFound(format!("Task not found: {}", task_id)))
+    }
+
+    /// Delete a task
+    pub async fn delete_task(&self, task_id: &str) -> Result<()> {
+        let task_record = self
+            .task_repo
+            .find_by_id(task_id)
+            .await?
+            .ok_or_else(|| TingError::NotFound(format!("Task not found: {}", task_id)))?;
+
+        if task_record.status == TaskStatus::Running.as_str() {
+            return Err(TingError::TaskError(
+                "Cannot delete running task. Cancel it first.".to_string(),
+            ));
+        }
+
+        self.task_repo.delete(task_id).await?;
+        
+        info!(task_id = %task_id, "Task deleted");
+        Ok(())
+    }
+
+    /// Batch delete tasks
+    pub async fn delete_tasks(&self, ids: Vec<String>) -> Result<usize> {
+        let count = self.task_repo.delete_batch(ids).await?;
+        info!(count = count, "Batch deleted tasks");
+        Ok(count)
+    }
+
+    /// Clear tasks
+    pub async fn clear_tasks(&self, status: Option<String>) -> Result<usize> {
+        if let Some(s) = status {
+            if s == "running" {
+                return Err(TingError::TaskError(
+                    "Cannot clear running tasks. Cancel them first.".to_string(),
+                ));
+            }
+            // Count before deleting
+            let tasks = self.task_repo.find_by_status(&s).await?;
+            let count = tasks.len();
+            self.task_repo.delete_by_status(&s).await?;
+            info!(status = %s, count = count, "Cleared tasks by status");
+            Ok(count)
+        } else {
+            // Delete all non-running tasks
+            // We can't use delete_all because it would delete running tasks too
+            // So we delete by status for each non-running status
+            let mut total = 0;
+            for s in ["queued", "completed", "failed", "cancelled"] {
+                let tasks = self.task_repo.find_by_status(s).await?;
+                let count = tasks.len();
+                self.task_repo.delete_by_status(s).await?;
+                total += count;
+            }
+            
+            // Clear queued tasks from memory queue as well
+            let mut queue = self.queue.write().await;
+            queue.clear();
+            
+            info!(count = total, "Cleared all non-running tasks");
+            Ok(total)
+        }
     }
 
     /// Start the task executor
@@ -924,12 +985,13 @@ impl TaskQueue {
         info!(
             library_id = %library_id,
             books_created = result.books_created,
+            books_deleted = result.books_deleted,
             errors = result.errors.len(),
             "Library scan completed"
         );
 
         // Update task message with result
-        let message = format!("图书馆扫描完成，共处理 {} 本图书", result.books_created);
+        let message = format!("图书馆扫描完成，新增 {} 本，更新 {} 本，删除 {} 本", result.books_created, result.books_updated, result.books_deleted);
         if let Err(e) = self.task_repo.update_progress(task_id, &message).await {
             warn!(task_id = %task_id, error = %e, "Failed to update task progress message");
         }

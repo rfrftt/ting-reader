@@ -208,6 +208,7 @@ impl JavaScriptPluginLoader {
         let homepage = json["homepage"].as_str().map(|s| s.to_string());
         let config_schema = json.get("config_schema").cloned();
         let min_core_version = json["min_core_version"].as_str().map(|s| s.to_string());
+        let id = json.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_else(|| name.clone());
         
         let supported_extensions = json["supported_extensions"].as_array().map(|arr| {
             arr.iter()
@@ -262,6 +263,7 @@ impl JavaScriptPluginLoader {
         };
         
         let metadata = PluginMetadata {
+            id,
             name,
             version,
             plugin_type,

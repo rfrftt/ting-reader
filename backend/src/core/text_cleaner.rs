@@ -206,7 +206,7 @@ impl TextCleaner {
 
     /// Clean a chapter title
     /// Returns: (cleaned_title, is_extra)
-    pub fn clean_chapter_title(&self, title: &str, book_title: Option<&str>) -> (String, bool) {
+    pub fn clean_chapter_title(&self, title: &str, _book_title: Option<&str>) -> (String, bool) {
         // Remove extension if present
         let title_no_ext = if let Some(idx) = title.rfind('.') {
             // Check if the part after dot looks like an extension (alphanumeric, length < 5)
@@ -220,141 +220,13 @@ impl TextCleaner {
             title
         };
 
-        let mut result = title_no_ext.to_string();
-        let mut is_extra = false;
-
-        // 0. Handle " - " separated parts (Filename parsing)
-        if result.contains(" - ") {
-            let parts: Vec<&str> = result.split(" - ").collect();
-            let mut chapter_part_index = -1;
-            
-            for (i, part) in parts.iter().enumerate().rev() {
-                // Check for chapter number patterns
-                let part_trim = part.trim();
-                if Regex::new(r"第\s*\d+\s*[集回章话]").unwrap().is_match(part_trim) ||
-                   Regex::new(r"[集回章话]\s*\d+").unwrap().is_match(part_trim) ||
-                   Regex::new(r"^\d+[\s.\-_]+").unwrap().is_match(part_trim) ||
-                   Regex::new(r"[\s.\-_]+\d+$").unwrap().is_match(part_trim) ||
-                   Regex::new(r"^\d+$").unwrap().is_match(part_trim) 
-                {
-                    chapter_part_index = i as i32;
-                    // If we found a strong match like "第xxx集", we stop
-                    if Regex::new(r"第\s*\d+\s*[集回章话]").unwrap().is_match(part_trim) {
-                        break;
-                    }
-                }
-            }
-
-            if chapter_part_index != -1 {
-                result = parts[chapter_part_index as usize..].join(" - ");
-            } else {
-                // Fallback: take the last part
-                if let Some(last) = parts.last() {
-                    result = last.to_string();
-                }
-            }
-        }
-
-        // 0.5 Remove leading parenthesized content (e.g. "(System Error) Book Title")
-        // Must run before book title removal
-        let leading_paren_re = Regex::new(r"^\s*[（\(\[\{【].*?[）\)\]\}】]").unwrap();
-        if leading_paren_re.is_match(&result) {
-            result = leading_paren_re.replace(&result, "").to_string();
-        }
-
-        // 1. Detect and remove "Extra" markers
+        // Detect "Extra" markers
         // Patterns: 番外, 花絮, 特典, SP, Extra
-        let extra_patterns = [
-            r"(?i)番外[：:\-\s]*",
-            r"(?i)花絮[：:\-\s]*",
-            r"(?i)特典[：:\-\s]*",
-            r"(?i)SP[：:\-\s]*",
-            r"(?i)Extra[：:\-\s]*"
-        ];
-        
-        for pattern in extra_patterns.iter() {
-            let re = Regex::new(pattern).unwrap();
-            if re.is_match(&result) {
-                is_extra = true;
-                result = re.replace_all(&result, "").to_string();
-            }
-        }
-        
-        // Also catch mid-title extra markers if not yet detected
-        if !is_extra && Regex::new(r"(?i)番外|花絮|特典|SP|Extra").unwrap().is_match(&result) {
-            is_extra = true;
-        }
-
-        // 2. Remove common promotional suffixes and advertisements
-        let promo_regex = Regex::new(r"[（\(\[\{【](?:(?:请|求)?订阅|转发|五星|好评|关注|微信|群|更多|加我|联系|点击|搜新书|新书|推荐|上架|完本).*?[）\)\]\}】]").unwrap();
-        result = promo_regex.replace_all(&result, "").to_string();
-
-        // 3. Remove book title if present
-        if let Some(bt) = book_title {
-            let clean_bt = bt.split(|c| c == '丨' || c == '｜' || c == '-').next().unwrap_or("").trim();
-            if clean_bt.len() > 1 {
-                let escaped_bt = regex::escape(clean_bt);
-                
-                // 3a. Remove from start
-                let start_re = Regex::new(&format!(r"(?i)^{}", escaped_bt)).unwrap();
-                let potential = start_re.replace(&result, "").to_string();
-                let is_start_empty = potential.trim().is_empty();
-                // Also check if it's just punctuation
-                let is_just_punct = Regex::new(r"^[\p{P}\p{S}\s]*$").unwrap().is_match(&potential);
-
-                if !is_start_empty && !is_just_punct {
-                    result = potential;
-                }
-                
-                // 3b. Remove from end (only if what remains is not just a number or empty)
-                let end_re = Regex::new(&format!(r"(?i){}$", escaped_bt)).unwrap();
-                if end_re.is_match(&result) {
-                    let potential = end_re.replace(&result, "").to_string();
-                    let is_just_number = Regex::new(r"^[\s.\-_]*((第\s*\d+\s*[集回章话])|(\d+))[\s.\-_]*$").unwrap().is_match(&potential);
-                    let is_empty = potential.trim().is_empty();
-                    let is_just_punct = Regex::new(r"^[\p{P}\p{S}\s]*$").unwrap().is_match(&potential);
-                    
-                    if !is_just_number && !is_empty && !is_just_punct {
-                        result = potential;
-                    }
-                }
-            }
-        }
-
-        // 4. Handle Chapter Numbers (Remove "第xxx集" only if other content exists)
-        let chapter_pattern = Regex::new(r"(第\s*\d+\s*[集回章话])").unwrap();
-        let chapter_str = chapter_pattern.captures(&result).map(|c| c[1].to_string());
-        
-        let mut temp_title = chapter_pattern.replace_all(&result, "").to_string();
-        
-        // 5. Remove leading/trailing numbers and separators
-        temp_title = Regex::new(r"^\d+[\s.\-_]+").unwrap().replace(&temp_title, "").to_string();
-        temp_title = Regex::new(r"[\s.\-_]+\d+$").unwrap().replace(&temp_title, "").to_string();
-
-        // 6. Remove common suffixes
-        temp_title = Regex::new(r"(?i)[-_]ZmAudio$").unwrap().replace(&temp_title, "").to_string();
-        
-        // 7. Final cleanup of separators
-        temp_title = Regex::new(r"^[：:\s\-_.]+").unwrap().replace(&temp_title, "").to_string();
-        temp_title = Regex::new(r"[：:\s\-_.]+$").unwrap().replace(&temp_title, "").to_string();
-        
-        temp_title = temp_title.trim().to_string();
-
-        // If title is empty, restore chapter number
-        if temp_title.is_empty() {
-            if let Some(s) = chapter_str {
-                return (s, is_extra);
-            }
-            // If no "第xxx集" but digits exist
-            if let Some(caps) = Regex::new(r"(\d+)").unwrap().captures(&result) {
-                 return (caps[1].to_string(), is_extra);
-            }
-            return (String::new(), is_extra);
-        }
+        let is_extra = Regex::new(r"(?i)番外|花絮|特典|SP|Extra").unwrap().is_match(title_no_ext);
 
         // Apply remaining builtin rules (like special chars removal)
         // But skip the ones we already handled or that might conflict
-        let cleaned = self.apply_all_rules(&temp_title).cleaned;
+        let cleaned = self.apply_all_rules(title_no_ext).cleaned;
         
         (cleaned, is_extra)
     }
@@ -439,9 +311,10 @@ impl TextCleaner {
         let mut result = text.to_string();
         let mut applied_rules = Vec::new();
         
-        // Combine builtin and plugin rules, sorted by priority
+        // Combine builtin, plugin and custom rules, sorted by priority
         let mut all_rules: Vec<&CleaningRule> = self.builtin_rules.iter().collect();
         all_rules.extend(self.plugin_rules.iter());
+        all_rules.extend(self.config.custom_rules.iter());
         all_rules.sort_by(|a, b| b.priority.cmp(&a.priority));
         
         // Apply each rule

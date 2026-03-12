@@ -4,6 +4,7 @@ use crate::api::models::{
     ReloadPluginResponse, UninstallPluginResponse,
     PluginConfigResponse, UpdatePluginConfigRequest, UpdatePluginConfigResponse,
     ScraperSourcesResponse, ScraperSearchRequest, ScraperDetailResponse, SearchResponse,
+    InstallStorePluginRequest,
 };
 use crate::core::error::{Result, TingError};
 use axum::{
@@ -242,4 +243,26 @@ pub async fn get_scraper_detail(
     let detail = state.scraper_service.get_detail(&source, &id).await?;
 
     Ok(Json(ScraperDetailResponse { detail }))
+}
+
+/// Handler for GET /api/v1/store/plugins - Get list of plugins from store
+pub async fn get_store_plugins(State(state): State<AppState>) -> Result<impl IntoResponse> {
+    let plugins = state.plugin_manager.get_store_plugins().await?;
+    Ok(Json(plugins))
+}
+
+/// Handler for POST /api/v1/store/install - Install a plugin from store
+pub async fn install_store_plugin(
+    State(state): State<AppState>,
+    Json(req): Json<InstallStorePluginRequest>,
+) -> Result<impl IntoResponse> {
+    let plugin_id = state.plugin_manager.install_plugin_from_store(&req.plugin_id).await?;
+    
+    Ok((
+        StatusCode::CREATED,
+        Json(InstallPluginResponse {
+            plugin_id: plugin_id.clone(),
+            message: format!("Plugin {} installed successfully from store", plugin_id),
+        }),
+    ))
 }

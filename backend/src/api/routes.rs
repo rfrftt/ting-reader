@@ -4,8 +4,8 @@ use crate::api::handlers::{
     create_book, delete_book, get_book, list_books, update_book, scrape_book,
     search_books, get_scraper_sources, scraper_search, get_scraper_detail,
     list_plugins, get_plugin_detail, install_plugin, reload_plugin, uninstall_plugin,
-    get_plugin_config, update_plugin_config,
-    list_tasks, get_task, cancel_task,
+    get_plugin_config, update_plugin_config, get_store_plugins, install_store_plugin,
+    list_tasks, get_task, cancel_task, delete_task, clear_tasks, batch_delete_tasks,
     health_check, get_metrics,
     get_config, update_config,
     get_book_chapters, update_chapter,
@@ -108,10 +108,14 @@ pub fn build_api_routes(state: AppState) -> Router {
         .route("/api/v1/plugins/install", post(install_plugin).layer(DefaultBodyLimit::max(50 * 1024 * 1024))) // 50MB limit for plugin upload
         .route("/api/v1/plugins/:id/reload", post(reload_plugin))
         .route("/api/v1/plugins/:id/config", get(get_plugin_config).put(update_plugin_config))
+        // Plugin store endpoints
+        .route("/api/v1/store/plugins", get(get_store_plugins))
+        .route("/api/v1/store/install", post(install_store_plugin))
         // Task management endpoints
-        .route("/api/v1/tasks", get(list_tasks))
-        .route("/api/v1/tasks/:id", get(get_task))
+        .route("/api/v1/tasks", get(list_tasks).delete(clear_tasks))
+        .route("/api/v1/tasks/:id", get(get_task).delete(delete_task))
         .route("/api/v1/tasks/:id/cancel", post(cancel_task))
+        .route("/api/v1/tasks/batch-delete", post(batch_delete_tasks))
         // System management endpoints
         .route("/api/v1/metrics", get(get_metrics))
         .route("/api/v1/config", get(get_config).put(update_config))
@@ -144,11 +148,15 @@ pub fn build_api_routes(state: AppState) -> Router {
         .route("/api/plugins/install", post(install_plugin).layer(DefaultBodyLimit::max(50 * 1024 * 1024))) // 50MB limit for plugin upload
         .route("/api/plugins/:id/reload", post(reload_plugin))
         .route("/api/plugins/:id/config", get(get_plugin_config).put(update_plugin_config))
+        // Plugin store endpoints (without /v1)
+        .route("/api/store/plugins", get(get_store_plugins))
+        .route("/api/store/install", post(install_store_plugin))
 
         // Task management endpoints (without /v1)
-        .route("/api/tasks", get(list_tasks))
-        .route("/api/tasks/:id", get(get_task))
+        .route("/api/tasks", get(list_tasks).delete(clear_tasks))
+        .route("/api/tasks/:id", get(get_task).delete(delete_task))
         .route("/api/tasks/:id/cancel", post(cancel_task))
+        .route("/api/tasks/batch-delete", post(batch_delete_tasks))
         // System management endpoints (without /v1)
         .route("/api/metrics", get(get_metrics))
         .route("/api/config", get(get_config).put(update_config))

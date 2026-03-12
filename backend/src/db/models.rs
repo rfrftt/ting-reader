@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Book record in the database
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Book {
     pub id: String,
     pub library_id: String,
@@ -194,6 +194,9 @@ pub struct ScraperConfig {
     /// Whether to write metadata to NFO files
     #[serde(default)]
     pub nfo_writing_enabled: bool,
+    /// Whether to write metadata to metadata.json files
+    #[serde(default)]
+    pub metadata_writing_enabled: bool,
     /// Whether to prefer ID3 title over directory name for book title
     #[serde(default)]
     pub prefer_audio_title: bool,
