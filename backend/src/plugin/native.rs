@@ -417,6 +417,41 @@ impl NativeLoader {
         
         // Check return code
         if return_code != 0 {
+            // Check if result_ptr contains error info before returning generic error
+            if !result_ptr.is_null() {
+                 let result_str = unsafe {
+                    let cstr = std::ffi::CStr::from_ptr(result_ptr as *const std::os::raw::c_char);
+                    cstr.to_str().unwrap_or("")
+                };
+                
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(result_str) {
+                    if let Some(err) = json.get("error").and_then(|e| e.as_str()) {
+                         tracing::warn!(
+                            plugin_id = %plugin_id,
+                            error = %err,
+                            "Native plugin returned error"
+                        );
+                        
+                        // Free memory
+                         let free_symbol_name = b"plugin_free";
+                         let has_free = unsafe {
+                            loaded.library.get::<*const ()>(free_symbol_name).is_ok()
+                         };
+                         if has_free {
+                             type FreeFn = unsafe extern "C" fn(*mut u8);
+                             let free_fn: Symbol<FreeFn> = unsafe {
+                                loaded.library.get(free_symbol_name).unwrap()
+                             };
+                             unsafe { free_fn(result_ptr); }
+                         } else {
+                             unsafe { libc::free(result_ptr as *mut libc::c_void); }
+                         }
+
+                        return Ok(json);
+                    }
+                }
+            }
+
             tracing::warn!(
                 plugin_id = %plugin_id,
                 return_code = return_code,
