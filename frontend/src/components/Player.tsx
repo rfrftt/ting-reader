@@ -9,8 +9,8 @@ import {
   Pause, 
   SkipBack, 
   SkipForward, 
-  // Volume2, 
-  // VolumeX, 
+  Volume2, 
+  VolumeX, 
   // FastForward, 
   ChevronUp,
   ChevronLeft,
@@ -54,8 +54,8 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
   onSeekEnd
 }) => {
   const displayTime = isSeeking ? seekTime : currentTime;
-  const playedPercent = (displayTime / (duration || 1)) * 100;
-  const bufferedPercent = (bufferedTime / (duration || 1)) * 100;
+  const playedPercent = (Number.isFinite(duration) && duration > 0) ? (displayTime / duration) * 100 : 0;
+  const bufferedPercent = (Number.isFinite(duration) && duration > 0) ? (bufferedTime / duration) * 100 : 0;
   
   // Safety check for themeColor
   const barColor = themeColor ? toSolidColor(themeColor) : undefined;
@@ -98,7 +98,7 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
       <input 
         type="range" 
         min="0" 
-        max={duration || 0} 
+        max={Number.isFinite(duration) ? duration : 0} 
         step="any"
         value={displayTime} 
         onInput={onSeek}
@@ -122,13 +122,26 @@ const Player: React.FC = () => {
   const API_BASE_URL = activeUrl || import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:3000');
   
   const getStreamUrl = (chapterId: string) => {
+    let url = '';
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if ((window as any).electronAPI) {
       // Electron mode: use custom protocol for caching
       const remote = encodeURIComponent(API_BASE_URL);
-      return `ting://stream/${chapterId}?token=${token}&remote=${remote}`;
+      url = `ting://stream/${chapterId}?token=${token}&remote=${remote}`;
+    } else {
+      url = `${API_BASE_URL}/api/stream/${chapterId}?token=${token}`;
     }
-    return `${API_BASE_URL}/api/stream/${chapterId}?token=${token}`;
+    
+    if (shouldTranscode) {
+      url += '&transcode=mp3';
+    }
+    
+    // Add retry count to force URL refresh even if shouldTranscode didn't change (e.g. network retry)
+    if (retryCount > 0) {
+        url += `&retry=${retryCount}`;
+    }
+    
+    return url;
   };
 
   const { 
@@ -145,7 +158,7 @@ const Player: React.FC = () => {
     playbackSpeed,
     setPlaybackSpeed,
     volume,
-    // setVolume,
+    setVolume,
     themeColor,
     setThemeColor,
     playChapter,
@@ -154,13 +167,15 @@ const Player: React.FC = () => {
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const location = useLocation();
-  const [isMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [showChapters, setShowChapters] = useState(false);
   const [showSleepTimer, setShowSleepTimer] = useState(false);
+  const [showVolumeControl, setShowVolumeControl] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [currentGroupIndex, setCurrentGroupIndex] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const volumeControlRef = useRef<HTMLDivElement>(null);
 
   const scrollGroups = (direction: 'left' | 'right') => {
     if (scrollRef.current) {
@@ -258,6 +273,7 @@ const Player: React.FC = () => {
   const [autoPreload, setAutoPreload] = useState(false);
   const [autoCache, setAutoCache] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const [shouldTranscode, setShouldTranscode] = useState(false);
   const isInitialLoadRef = useRef(true);
   const preloadAudioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -286,6 +302,9 @@ const Player: React.FC = () => {
       if (timerMenuRef.current && !timerMenuRef.current.contains(event.target as Node)) {
         setShowSleepTimer(false);
       }
+      if (volumeControlRef.current && !volumeControlRef.current.contains(event.target as Node)) {
+        setShowVolumeControl(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
@@ -294,6 +313,7 @@ const Player: React.FC = () => {
   // Reset initial load ref when chapter changes
   useEffect(() => {
     isInitialLoadRef.current = true;
+    setShouldTranscode(false);
     setTimeout(() => {
       setBufferedTime(0);
       setRetryCount(0);
@@ -312,6 +332,11 @@ const Player: React.FC = () => {
     if (!audioRef.current || !currentChapter) return;
     setTimeout(() => setError(null), 0); // Clear error on source change
     
+    // Reset retry count when chapter changes (this is also handled in another effect, but safe to double check)
+    // IMPORTANT: If source changes due to transcoding, we do NOT want to reset retry count immediately here
+    // or we might enter a loop. 
+    // Actually, retryCount is part of the dependency array, so this runs on retry too.
+    
     if (isPlaying) {
       const playPromise = audioRef.current.play();
       if (playPromise !== undefined) {
@@ -322,14 +347,15 @@ const Player: React.FC = () => {
             return;
           }
           console.error('Playback failed', err);
-          setError('播放失败，可能是文件格式不支持或网络错误');
+          // Don't set user-visible error yet, let onError handler try to recover first
+          // setError('播放失败，可能是文件格式不支持或网络错误');
         });
       }
     } else {
       audioRef.current.pause();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, currentChapter?.id, retryCount]);
+  }, [isPlaying, currentChapter?.id, retryCount, shouldTranscode]);
 
   // Preload and Server-side Cache next chapter logic
   useEffect(() => {
@@ -521,7 +547,15 @@ const Player: React.FC = () => {
 
   const handleLoadedMetadata = () => {
     if (audioRef.current) {
-      const browserDuration = audioRef.current.duration;
+      let browserDuration = audioRef.current.duration;
+      
+      // Handle infinite duration (common in streaming/transcoding)
+      if (!Number.isFinite(browserDuration) || isNaN(browserDuration)) {
+        if (currentChapter?.duration) {
+          browserDuration = currentChapter.duration;
+        }
+      }
+
       setDuration(browserDuration);
 
       // Resume position from store if this is the initial load for this chapter
@@ -533,8 +567,8 @@ const Player: React.FC = () => {
         }
       }
 
-      // Sync duration back to server if it's significantly different
-      if (currentChapter && browserDuration > 0) {
+      // Sync duration back to server if it's significantly different and valid
+      if (currentChapter && Number.isFinite(browserDuration) && browserDuration > 0) {
         const diff = Math.abs(browserDuration - (currentChapter.duration || 0));
         if (diff > 2) {
           console.log(`Syncing accurate duration for ${currentChapter.title}: ${browserDuration}s`);
@@ -574,7 +608,7 @@ const Player: React.FC = () => {
   };
 
   const formatTime = (time: number) => {
-    if (!time || time < 0) return '0:00';
+    if (!Number.isFinite(time) || isNaN(time) || time < 0) return '0:00';
     const h = Math.floor(time / 3600);
     const m = Math.floor((time % 3600) / 60);
     const s = Math.floor(time % 60);
@@ -605,6 +639,10 @@ const Player: React.FC = () => {
       setTimeout(() => setIsExpanded(false), 0);
     }
   }, [location.pathname, isExpanded, isHiddenPage]);
+
+  useEffect(() => {
+    setShowVolumeControl(false);
+  }, [isExpanded]);
 
   // Fullscreen Logic for Widget
   const toggleFullscreen = async () => {
@@ -694,7 +732,7 @@ const Player: React.FC = () => {
     >
       <audio
         ref={audioRef}
-        src={getStreamUrl(currentChapter.id) + (retryCount > 0 ? `&retry=${retryCount}` : '')}
+        src={getStreamUrl(currentChapter.id)}
         crossOrigin="anonymous"
         onTimeUpdate={handleTimeUpdate}
         onProgress={handleProgress}
@@ -704,20 +742,42 @@ const Player: React.FC = () => {
         onPause={() => setIsPlaying(false)}
         onError={(e) => {
           const audio = audioRef.current;
+          console.log('Audio Error Event Triggered', { 
+            error: audio?.error, 
+            code: audio?.error?.code, 
+            message: audio?.error?.message,
+            retryCount,
+            shouldTranscode
+          });
+
           if (audio && audio.error) {
-            // Ignore aborted errors (code 4)
-            if (audio.error.code === 4) {
-              console.log('Playback aborted (normal)');
+            // Ignore aborted errors (code 4) ONLY if we are not already trying to recover
+            // Actually code 4 is MEDIA_ERR_SRC_NOT_SUPPORTED, which is exactly what we want to catch for WMA
+            // Code 1 is MEDIA_ERR_ABORTED
+            
+            if (audio.error.code === 1) {
+              console.log('Playback aborted (user action)');
               return;
             }
-            // Auto retry on decode error (code 3)
-            if (audio.error.code === 3 && retryCount < 3) {
-                 console.log(`Playback decode error, retrying (${retryCount + 1}/3)...`);
+
+            // Auto retry on network (2), decode error (3) or source not supported (4)
+            // We include network error (2) in retry logic just in case, but transcode mainly fixes 3 & 4
+            if (retryCount < 3) {
+                 console.log(`Playback error ${audio.error.code}, retrying with transcode (${retryCount + 1}/3)...`);
+                 setShouldTranscode(true);
                  setRetryCount(prev => prev + 1);
                  return;
             }
             console.error('Audio element error', audio.error);
           } else {
+            // Even if audio.error is null, if we have an error event and haven't retried max times, try transcoding
+            // This handles edge cases where browser doesn't populate error object properly
+            if (retryCount < 3) {
+                console.log('Unknown audio error, attempting transcode retry...');
+                setShouldTranscode(true);
+                setRetryCount(prev => prev + 1);
+                return;
+            }
             console.error('Audio element error (unknown)', e);
           }
           setError('音频加载出错，请尝试重新扫描库或稍后再试');
@@ -754,7 +814,7 @@ const Player: React.FC = () => {
                 <img 
                   src={getCoverUrl(currentBook?.coverUrl, currentBook?.libraryId, currentBook?.id)} 
                   alt={currentBook?.title}
-                  crossOrigin="anonymous"
+                  referrerPolicy="no-referrer"
                   className="w-full h-full object-cover"
                   onError={(e) => {
                     (e.target as HTMLImageElement).src = 'https://placehold.co/300x400?text=No+Cover';
@@ -921,6 +981,63 @@ const Player: React.FC = () => {
 
             {/* Desktop Extra Controls - Visible on Tablet and Desktop */}
             <div className="hidden md:flex items-center gap-4 lg:gap-6 min-w-[100px] lg:min-w-[140px] justify-end">
+              {/* Volume Control */}
+              <div className="relative" ref={!isExpanded ? volumeControlRef : null}>
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowVolumeControl(!showVolumeControl);
+                  }}
+                  className="text-slate-400 transition-colors p-1 hover:scale-110 flex items-center gap-1"
+                  style={{ color: themeColor ? setAlpha(themeColor, 0.6) : undefined }}
+                  title="音量"
+                >
+                  {isMuted || volume === 0 ? (
+                    <VolumeX size={20} />
+                  ) : (
+                    <Volume2 size={20} />
+                  )}
+                </button>
+
+                {showVolumeControl && (
+                  <div 
+                    className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 bg-white dark:bg-slate-800 shadow-xl rounded-full py-4 border border-slate-100 dark:border-slate-700 w-12 flex flex-col items-center gap-3 z-[220] animate-in zoom-in-95 duration-200 cursor-default"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <span className="text-[10px] font-bold text-slate-500 min-w-[24px] text-center select-none">
+                      {Math.round(volume * 100)}
+                    </span>
+                    
+                    <div className="h-24 w-full flex items-center justify-center relative">
+                      <input 
+                        type="range" 
+                        min="0" 
+                        max="1" 
+                        step="0.01"
+                        value={volume}
+                        onChange={(e) => {
+                          setVolume(parseFloat(e.target.value));
+                          if (isMuted && parseFloat(e.target.value) > 0) setIsMuted(false);
+                        }}
+                        className="absolute w-24 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-primary-600 -rotate-90 hover:accent-primary-500"
+                      />
+                    </div>
+
+                    <button
+                      onClick={() => setIsMuted(!isMuted)}
+                      className={`p-2 rounded-full transition-colors ${
+                        isMuted 
+                          ? 'bg-primary-100 text-primary-600 dark:bg-primary-900/30' 
+                          : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'
+                      }`}
+                      title={isMuted ? "取消静音" : "静音"}
+                    >
+                      {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <button 
                 onClick={() => setPlaybackSpeed(playbackSpeed === 2 ? 1 : playbackSpeed + 0.25)} 
                 className="text-[10px] font-bold px-2 py-1 rounded transition-colors"
@@ -1017,7 +1134,7 @@ const Player: React.FC = () => {
               <img 
                 src={getCoverUrl(currentBook?.coverUrl, currentBook?.libraryId, currentBook?.id)} 
                 alt={currentBook?.title}
-                crossOrigin="anonymous"
+                referrerPolicy="no-referrer"
                 className="w-full h-full object-cover"
                 onError={(e) => {
                   (e.target as HTMLImageElement).src = 'https://placehold.co/300x400?text=No+Cover';
@@ -1048,6 +1165,62 @@ const Player: React.FC = () => {
                   <span className="text-[10px] sm:text-xs font-medium text-slate-500 dark:text-slate-400 min-w-[40px]">
                     {formatTime(duration)}
                   </span>
+
+                  {/* Volume Control */}
+                  <div className="relative" ref={volumeControlRef}>
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowVolumeControl(!showVolumeControl);
+                      }}
+                      className="p-1.5 sm:p-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"
+                      title="音量"
+                    >
+                      {isMuted || volume === 0 ? (
+                        <VolumeX size={18} className="sm:w-5 sm:h-5" />
+                      ) : (
+                        <Volume2 size={18} className={`sm:w-5 sm:h-5 ${showVolumeControl ? 'text-primary-600' : ''}`} />
+                      )}
+                    </button>
+
+                    {showVolumeControl && (
+                      <div 
+                        className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 bg-white dark:bg-slate-800 shadow-xl rounded-full py-4 border border-slate-100 dark:border-slate-700 w-12 flex flex-col items-center gap-3 z-[220] animate-in zoom-in-95 duration-200 cursor-default"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <span className="text-[10px] font-bold text-slate-500 min-w-[24px] text-center select-none">
+                          {Math.round(volume * 100)}
+                        </span>
+                        
+                        <div className="h-24 w-full flex items-center justify-center relative">
+                          <input 
+                            type="range" 
+                            min="0" 
+                            max="1" 
+                            step="0.01"
+                            value={volume}
+                            onChange={(e) => {
+                              setVolume(parseFloat(e.target.value));
+                              if (isMuted && parseFloat(e.target.value) > 0) setIsMuted(false);
+                            }}
+                            className="absolute w-24 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-primary-600 -rotate-90 hover:accent-primary-500"
+                          />
+                        </div>
+
+                        <button
+                          onClick={() => setIsMuted(!isMuted)}
+                          className={`p-2 rounded-full transition-colors ${
+                            isMuted 
+                              ? 'bg-primary-100 text-primary-600 dark:bg-primary-900/30' 
+                              : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'
+                          }`}
+                          title={isMuted ? "取消静音" : "静音"}
+                        >
+                          {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1105,6 +1278,8 @@ const Player: React.FC = () => {
                   </div>
                   <span className="text-[10px] sm:text-xs font-bold">{playbackSpeed}x</span>
                 </button>
+
+
 
                 <div className="flex flex-col items-center gap-1 sm:gap-1.5">
                   <div className="p-2">

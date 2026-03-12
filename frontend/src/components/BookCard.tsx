@@ -20,6 +20,7 @@ const BookCard: React.FC<BookCardProps> = ({ book, onClick, disableLink }) => {
         <img 
           src={getCoverUrl(book.coverUrl, book.libraryId, book.id)} 
           alt={book.title}
+          referrerPolicy="no-referrer"
           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
           onError={(e) => {
             (e.target as HTMLImageElement).src = 'https://placehold.co/300x400?text=No+Cover';

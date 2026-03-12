@@ -173,7 +173,7 @@ const RecentPlayCard = ({ progress }: { progress: Progress }) => (
       <img 
         src={getCoverUrl(progress.coverUrl, progress.libraryId, progress.bookId)} 
         alt={progress.bookTitle}
-        crossOrigin="anonymous"
+        referrerPolicy="no-referrer"
         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
         onError={(e) => {
           (e.target as HTMLImageElement).src = 'https://placehold.co/300x400?text=No+Cover';

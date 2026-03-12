@@ -78,7 +78,12 @@ const BookSelector: React.FC<Props> = ({ onSelect, onClose, excludeIds }) => {
                 >
                   <div className="w-10 h-14 bg-slate-200 dark:bg-slate-700 rounded-md overflow-hidden shrink-0 relative shadow-sm">
                     {book.coverUrl ? (
-                      <img src={getCoverUrl(book.coverUrl, book.libraryId, book.id)} className="w-full h-full object-cover" alt="" />
+                      <img 
+                        src={getCoverUrl(book.coverUrl, book.libraryId, book.id)} 
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover" 
+                        alt="" 
+                      />
                     ) : (
                       <div className="flex items-center justify-center h-full text-slate-400">
                         <BookIcon size={16} />

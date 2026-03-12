@@ -23,6 +23,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({ series, onClick }) => {
             <img 
               src={getCoverUrl(series.coverUrl, series.libraryId)} 
               alt={series.title}
+              referrerPolicy="no-referrer"
               className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
               onError={(e) => {
                 (e.target as HTMLImageElement).src = 'https://placehold.co/300x400?text=Series';

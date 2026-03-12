@@ -20,8 +20,7 @@ import {
 const ScraperConfigurator = ({ 
   configStr, 
   sources, 
-  onChange,
-  libraryType
+  onChange
 }: { 
   configStr: string, 
   sources: {id: string, name: string}[], 
@@ -51,10 +50,16 @@ const ScraperConfigurator = ({
   const currentKey = currentTab.key;
   const activeIds: string[] = config[currentKey] || [];
   const nfoEnabled = config.nfoWritingEnabled || false;
+  const metadataWritingEnabled = config.metadataWritingEnabled || false;
   const preferAudioTitle = config.preferAudioTitle || false;
 
   const handleNfoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const newConfig = { ...config, nfoWritingEnabled: e.target.checked };
+      onChange(JSON.stringify(newConfig, null, 2));
+  };
+
+  const handleMetadataWritingChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const newConfig = { ...config, metadataWritingEnabled: e.target.checked };
       onChange(JSON.stringify(newConfig, null, 2));
   };
 
@@ -95,26 +100,43 @@ const ScraperConfigurator = ({
     <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 border border-slate-200 dark:border-slate-700">
       {/* Settings Toggles */}
       <div className="space-y-2 mb-4">
-        {/* NFO Toggle - Only show for local libraries */}
-        {libraryType === 'local' && (
-          <div className="flex items-center gap-3 p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">
-            <input 
-              type="checkbox" 
-              id="nfo-writing" 
-              checked={nfoEnabled} 
-              onChange={handleNfoChange}
-              className="w-4 h-4 text-primary-600 rounded focus:ring-primary-500 cursor-pointer"
-            />
-            <div className="flex flex-col">
-              <label htmlFor="nfo-writing" className="text-sm font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
-                启用 NFO 元数据写入
-              </label>
-              <span className="text-[10px] text-slate-400">
-                开启后，刮削或修改元数据时将同步写入 book.nfo 文件
-              </span>
-            </div>
+        {/* NFO Toggle - Show for all libraries */}
+        <div className="flex items-center gap-3 p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">
+          <input 
+            type="checkbox" 
+            id="nfo-writing" 
+            checked={nfoEnabled} 
+            onChange={handleNfoChange}
+            className="w-4 h-4 text-primary-600 rounded focus:ring-primary-500 cursor-pointer"
+          />
+          <div className="flex flex-col">
+            <label htmlFor="nfo-writing" className="text-sm font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
+              启用 NFO 元数据写入
+            </label>
+            <span className="text-[10px] text-slate-400">
+              开启后，刮削或修改元数据时将同步写入 book.nfo 文件
+            </span>
           </div>
-        )}
+        </div>
+
+        {/* Metadata JSON Toggle - Show for all libraries */}
+        <div className="flex items-center gap-3 p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">
+          <input 
+            type="checkbox" 
+            id="metadata-writing" 
+            checked={metadataWritingEnabled} 
+            onChange={handleMetadataWritingChange}
+            className="w-4 h-4 text-primary-600 rounded focus:ring-primary-500 cursor-pointer"
+          />
+          <div className="flex flex-col">
+            <label htmlFor="metadata-writing" className="text-sm font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
+              写入 metadata.json
+            </label>
+            <span className="text-[10px] text-slate-400">
+              开启后，生成 Audiobookshelf 兼容的 metadata.json 元数据文件
+            </span>
+          </div>
+        </div>
 
         {/* Prefer Audio Title - Show for all libraries */}
         <div className="flex items-center gap-3 p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">

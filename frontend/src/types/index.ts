@@ -15,6 +15,7 @@ export interface ScraperConfig {
   narratorSources?: string[];
   tagsSources?: string[];
   nfo_writing_enabled?: boolean;
+  metadata_writing_enabled?: boolean;
   prefer_audio_title?: boolean;
 }
 
@@ -95,6 +96,20 @@ export interface Plugin {
   successfulCalls?: number;
   failedCalls?: number;
   successRate?: number;
+}
+
+export interface StorePlugin {
+  id: string;
+  name: string;
+  description: string;
+  longDescription?: string;
+  icon?: string;
+  repo?: string;
+  pluginType: 'scraper' | 'format' | 'utility';
+  version: string;
+  downloadUrl: string | Record<string, string>;
+  size?: string | Record<string, string>;
+  date?: string;
 }
 
 export interface MergeSuggestion {
