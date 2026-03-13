@@ -392,7 +392,11 @@ pub async fn stream_chapter(
             // Explicitly set audio codec for mp3
             if format == "mp3" {
                 cmd.arg("-acodec").arg("libmp3lame");
-                cmd.arg("-q:a").arg("4"); // VBR Quality ~160kbps, good balance
+                cmd.arg("-b:a").arg("128k");
+                cmd.arg("-ac").arg("2");
+                cmd.arg("-ar").arg("44100");
+                cmd.arg("-vn");
+                cmd.arg("-map").arg("0:a:0");
             }
 
             cmd
@@ -699,8 +703,10 @@ pub async fn stream_chapter(
                         ).into_response());
                     }
                 }
-                
-                let body = tokio::fs::read(&cache_path).await?;
+
+                let file = tokio::fs::File::open(&cache_path).await?;
+                let stream = ReaderStream::new(file);
+                let body = Body::from_stream(stream);
                 return Ok((
                     StatusCode::OK,
                     [
