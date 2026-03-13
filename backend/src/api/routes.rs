@@ -166,7 +166,7 @@ pub fn build_api_routes(state: AppState) -> Router {
         // Proxy API endpoints
         .route("/api/proxy/cover", get(proxy_cover))
         // Audio streaming endpoints
-        .route("/api/stream/:chapterId", get(stream_chapter))
+        .route("/api/stream/:chapterId", get(stream_chapter).head(stream_chapter))
         .layer(middleware::from_fn_with_state(state.clone(), authenticate));
 
     // Combine public and protected routes

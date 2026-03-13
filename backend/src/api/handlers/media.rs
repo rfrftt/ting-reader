@@ -289,6 +289,7 @@ pub async fn stream_chapter(
     State(state): State<AppState>,
     Path(chapter_id): Path<String>,
     Query(params): Query<StreamQuery>,
+    method: axum::http::Method,
     headers: axum::http::HeaderMap,
     user: Option<crate::auth::middleware::AuthUser>,
 ) -> Result<impl IntoResponse> {
@@ -297,6 +298,9 @@ pub async fn stream_chapter(
     if let Some(_token) = params.token {
         // Token validation would go here
     }
+
+    let is_head_request = method == axum::http::Method::HEAD;
+
     
     let chapter = state.chapter_repo.find_by_id(&chapter_id).await?
         .ok_or_else(|| TingError::NotFound(format!("Chapter {} not found", chapter_id)))?;
@@ -1002,6 +1006,20 @@ pub async fn stream_chapter(
         // If no range header was requested, return 200 OK with chunked encoding (no Content-Length)
         // This avoids "unexpected end of stream" errors if our logic_size prediction is slightly off (e.g. padding)
         if range_header.is_none() {
+             if is_head_request {
+                 return Ok((
+                    StatusCode::OK,
+                    [
+                        (header::CONTENT_TYPE, mime_type.to_string()),
+                        (header::CONTENT_LENGTH, logic_size.to_string()),
+                        (header::ACCEPT_RANGES, "bytes".to_string()),
+                        (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
+                        ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
+                    ],
+                    Body::empty(),
+                ).into_response());
+             }
+
              return Ok((
                 StatusCode::OK,
                 [
@@ -1093,7 +1111,7 @@ pub async fn stream_chapter(
                 (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
                 ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
             ],
-            body,
+            if is_head_request { Body::empty() } else { body },
         ).into_response())
     } else {
         Ok((
@@ -1105,7 +1123,7 @@ pub async fn stream_chapter(
                 (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
                 ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
             ],
-            body,
+            if is_head_request { Body::empty() } else { body },
         ).into_response())
     }
 }
