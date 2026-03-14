@@ -30,6 +30,7 @@ const ScraperConfigurator = ({
   const [activeTab, setActiveTab] = useState('default');
   
   const tabs = [
+    { id: 'priority', label: '优先级', key: 'metadataPriority' },
     { id: 'default', label: '默认', key: 'defaultSources' },
     { id: 'cover', label: '封面', key: 'coverSources' },
     { id: 'intro', label: '简介', key: 'introSources' },
@@ -48,7 +49,23 @@ const ScraperConfigurator = ({
 
   const currentTab = tabs.find(t => t.id === activeTab) || tabs[0];
   const currentKey = currentTab.key;
-  const activeIds: string[] = config[currentKey] || [];
+  
+  // Special handling for priority tab
+  const PRIORITY_SOURCES = [
+    { id: 'local_metadata', name: '本地元数据 (JSON/NFO)' },
+    { id: 'audio_metadata', name: '音频文件元数据 (ID3)' },
+    { id: 'scraper', name: '刮削器 (Plugins)' }
+  ];
+
+  let activeIds: string[] = config[currentKey] || [];
+  
+  // Initialize default priority if empty
+  if (activeTab === 'priority' && activeIds.length === 0) {
+      activeIds = ['local_metadata', 'audio_metadata', 'scraper'];
+      // Update config immediately? No, wait for user interaction or let backend handle default.
+      // But for UI rendering we need values.
+  }
+
   const nfoEnabled = config.nfoWritingEnabled || false;
   const metadataWritingEnabled = config.metadataWritingEnabled || false;
   const preferAudioTitle = config.preferAudioTitle || false;
@@ -90,11 +107,14 @@ const ScraperConfigurator = ({
   };
 
   const activeSources = activeIds.map(id => {
-    const source = sources.find(s => s.id === id);
+    const sourceList = activeTab === 'priority' ? PRIORITY_SOURCES : sources;
+    const source = sourceList.find(s => s.id === id);
     return source || { id, name: id }; // Fallback for unknown IDs
   });
 
-  const availableSources = sources.filter(s => !activeIds.includes(s.id));
+  const availableSources = activeTab === 'priority' 
+      ? [] 
+      : sources.filter(s => !activeIds.includes(s.id));
 
   return (
     <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 border border-slate-200 dark:border-slate-700">
@@ -159,13 +179,13 @@ const ScraperConfigurator = ({
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 overflow-x-auto pb-2 mb-4 border-b border-slate-200 dark:border-slate-700 no-scrollbar">
+      <div className="flex gap-1 overflow-x-auto pb-2 mb-4 border-b border-slate-200 dark:border-slate-700 no-scrollbar">
         {tabs.map(tab => (
           <button
             key={tab.id}
             type="button"
             onClick={() => setActiveTab(tab.id)}
-            className={`px-3 py-1.5 rounded-lg text-sm font-bold whitespace-nowrap transition-all ${
+            className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
               activeTab === tab.id
                 ? 'bg-white dark:bg-slate-700 text-primary-600 shadow-sm'
                 : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-200/50 dark:hover:bg-slate-700/50'
@@ -176,11 +196,11 @@ const ScraperConfigurator = ({
         ))}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className={`grid ${activeTab === 'priority' ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2'} gap-4`}>
         {/* Active List (Ordered) */}
         <div className="space-y-2">
           <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex justify-between">
-            <span>已启用 (按优先级排序)</span>
+            <span>{activeTab === 'priority' ? '元数据来源优先级排序 (拖动调整)' : '已启用 (按优先级排序)'}</span>
             <span className="text-primary-600">{activeSources.length}</span>
           </div>
           <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 min-h-[120px] p-2 space-y-2">
@@ -208,7 +228,8 @@ const ScraperConfigurator = ({
                     <button
                       type="button"
                       onClick={() => handleRemove(source.id)}
-                      className="p-1 hover:bg-red-100 text-slate-400 hover:text-red-500 rounded ml-1"
+                      disabled={activeTab === 'priority'}
+                      className={`p-1 rounded ml-1 ${activeTab === 'priority' ? 'opacity-0 cursor-default' : 'hover:bg-red-100 text-slate-400 hover:text-red-500'}`}
                     >
                       <X size={14} />
                     </button>
@@ -225,31 +246,33 @@ const ScraperConfigurator = ({
         </div>
 
         {/* Available List */}
-        <div className="space-y-2">
-          <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex justify-between">
-            <span>可用插件</span>
-            <span className="text-slate-400">{availableSources.length}</span>
+        {activeTab !== 'priority' && (
+          <div className="space-y-2">
+            <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex justify-between">
+              <span>可用插件</span>
+              <span className="text-slate-400">{availableSources.length}</span>
+            </div>
+            <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 min-h-[120px] p-2 space-y-2">
+              {availableSources.length > 0 ? (
+                availableSources.map(source => (
+                  <button
+                    key={source.id}
+                    type="button"
+                    onClick={() => handleAdd(source.id)}
+                    className="w-full flex items-center justify-between p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-md group text-left transition-colors"
+                  >
+                    <span className="text-sm font-medium truncate dark:text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-200">{source.name}</span>
+                    <Plus size={16} className="text-primary-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </button>
+                ))
+              ) : (
+                <div className="h-full flex items-center justify-center text-slate-400 text-xs italic p-4">
+                  {sources.length === 0 ? '未检测到插件' : '已全部添加'}
+                </div>
+              )}
+            </div>
           </div>
-          <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 min-h-[120px] p-2 space-y-2">
-            {availableSources.length > 0 ? (
-              availableSources.map(source => (
-                <button
-                  key={source.id}
-                  type="button"
-                  onClick={() => handleAdd(source.id)}
-                  className="w-full flex items-center justify-between p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-md group text-left transition-colors"
-                >
-                  <span className="text-sm font-medium truncate dark:text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-200">{source.name}</span>
-                  <Plus size={16} className="text-primary-500 opacity-0 group-hover:opacity-100 transition-opacity" />
-                </button>
-              ))
-            ) : (
-              <div className="h-full flex items-center justify-center text-slate-400 text-xs italic p-4">
-                {sources.length === 0 ? '未检测到插件' : '已全部添加'}
-              </div>
-            )}
-          </div>
-        </div>
+        )}
       </div>
       
       <p className="text-[10px] text-slate-400 mt-3">
