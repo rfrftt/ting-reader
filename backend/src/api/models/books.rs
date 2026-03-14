@@ -117,6 +117,7 @@ pub struct CreateBookRequest {
     pub hash: String,
     #[serde(default, deserialize_with = "deserialize_tags_or_string")]
     pub tags: Option<String>,
+    pub genre: Option<String>,
     // V6
     pub chapter_regex: Option<String>,
 }
@@ -131,6 +132,7 @@ pub struct UpdateBookRequest {
     pub cover_url: Option<String>,
     pub theme_color: Option<String>,
     pub description: Option<String>,
+    pub genre: Option<String>,
     pub skip_intro: Option<i32>,
     pub skip_outro: Option<i32>,
     pub path: Option<String>,
@@ -158,6 +160,7 @@ pub struct BookResponse {
     pub path: String,
     pub hash: String,
     pub tags: Option<String>,
+    pub genre: Option<String>,
     pub created_at: String,
     pub library_type: Option<String>,
     pub is_favorite: bool,
@@ -182,6 +185,7 @@ impl From<Book> for BookResponse {
             path: book.path,
             hash: book.hash,
             tags: book.tags,
+            genre: book.genre,
             created_at: book.created_at,
             library_type: None, // To be filled by handler
             is_favorite: false, // To be filled by handler
@@ -353,6 +357,7 @@ pub struct ScrapeMetadata {
     pub description: String,
     pub cover_url: Option<String>,
     pub tags: Option<Vec<String>>,
+    pub genre: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

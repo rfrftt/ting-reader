@@ -81,6 +81,7 @@ pub struct AudioMetadata {
     pub album: Option<String>,
     pub album_artist: Option<String>,
     pub composer: Option<String>,
+    pub genre: Option<String>,
 }
 
 /// Audio stream configuration
@@ -319,6 +320,7 @@ impl AudioStreamer {
         let mut album = None;
         let mut album_artist = None;
         let mut composer = None;
+        let mut genre = None;
 
         // Iterate through all metadata revisions
         // Symphonia might provide multiple metadata blocks (e.g. ID3v2 and ID3v1, or iTunes metadata)
@@ -347,6 +349,9 @@ impl AudioStreamer {
                     Some(symphonia::core::meta::StandardTagKey::Composer) => {
                          if composer.is_none() { composer = Some(tag.value.to_string()); }
                     }
+                    Some(symphonia::core::meta::StandardTagKey::Genre) => {
+                         if genre.is_none() { genre = Some(tag.value.to_string()); }
+                    }
                     _ => {}
                 }
             }
@@ -370,6 +375,9 @@ impl AudioStreamer {
                 if album_artist.is_none() {
                     album_artist = tag.album_artist().map(|s| s.to_string());
                 }
+                if genre.is_none() {
+                    genre = tag.genre().map(|s| s.to_string());
+                }
             }
         }
 
@@ -384,6 +392,7 @@ impl AudioStreamer {
             album,
             album_artist,
             composer,
+            genre,
         };
 
         // Cache the metadata

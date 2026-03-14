@@ -55,16 +55,21 @@ impl AudiobookshelfMetadata {
         book: &crate::db::models::Book,
         chapters: Vec<AudiobookshelfChapter>,
         extended: ExtendedMetadata,
+        series: Vec<String>,
     ) -> Self {
+        let tags_vec: Vec<String> = book.tags.clone()
+            .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
+            .unwrap_or_default();
+            
         Self {
-            tags: extended.tags,
+            tags: tags_vec,
             chapters,
             title: book.title.clone(),
             subtitle: extended.subtitle,
             authors: book.author.clone().map(|s| vec![s]).unwrap_or_default(),
             narrators: book.narrator.clone().map(|s| vec![s]).unwrap_or_default(),
-            series: vec![],
-            genres: book.tags.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default(),
+            series,
+            genres: book.genre.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default(),
             published_year: extended.published_year,
             published_date: extended.published_date,
             publisher: extended.publisher,

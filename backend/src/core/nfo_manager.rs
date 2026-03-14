@@ -468,6 +468,10 @@ pub struct BookMetadata {
     /// Tags/categories
     #[serde(default)]
     pub tags: Tags,
+
+    /// Genre
+    #[serde(default)]
+    pub genre: Tags, // Use Tags struct for list of genres, mapped to <genre>
     
     /// Total number of chapters
     pub chapter_count: u32,
@@ -509,6 +513,7 @@ impl BookMetadata {
             source_id,
             cover_url: None,
             tags: Tags::default(),
+            genre: Tags::default(),
             chapter_count,
             total_duration: None,
             created_at: now,

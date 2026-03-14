@@ -11,6 +11,7 @@ use crate::core::error::{Result, TingError};
 use crate::db::models::Book;
 use crate::core::nfo_manager::BookMetadata;
 use crate::db::repository::{Repository, ChapterRepository};
+use crate::core::task_queue::{Task, TaskPayload, Priority};
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -107,6 +108,7 @@ pub async fn create_book(
         path: req.path,
         hash: req.hash,
         tags: req.tags,
+        genre: None,
         created_at,
         manual_corrected: 0,
         match_pattern: None,
@@ -244,6 +246,7 @@ pub async fn update_book(
         path: req.path.unwrap_or(existing_book.path),
         hash: req.hash.unwrap_or(existing_book.hash),
         tags: req.tags.or(existing_book.tags),
+        genre: req.genre.or(existing_book.genre),
         created_at: existing_book.created_at,
         manual_corrected: existing_book.manual_corrected,
         match_pattern: existing_book.match_pattern,
@@ -319,7 +322,8 @@ pub async fn update_book(
             metadata_json.authors = updated_book.author.clone().map(|s| vec![s]).unwrap_or_default();
             metadata_json.narrators = updated_book.narrator.clone().map(|s| vec![s]).unwrap_or_default();
             metadata_json.description = updated_book.description.clone();
-            metadata_json.genres = updated_book.tags.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
+            metadata_json.genres = updated_book.genre.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
+            metadata_json.tags = updated_book.tags.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
             
             // Sync chapters from DB
             let chapter_repo = ChapterRepository::new(state.book_repo.db().clone());
@@ -499,7 +503,8 @@ pub async fn scrape_book(
             metadata_json.authors = updated_book.author.clone().map(|s| vec![s]).unwrap_or_default();
             metadata_json.narrators = updated_book.narrator.clone().map(|s| vec![s]).unwrap_or_default();
             metadata_json.description = updated_book.description.clone();
-            metadata_json.genres = updated_book.tags.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
+            metadata_json.genres = updated_book.genre.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
+            metadata_json.tags = updated_book.tags.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
             
             // Subtitle is now in metadata.json but not in Book struct, so we preserve what was read.
             // If request had extended fields (not supported in UpdateBookRequest yet), we would update them here.
@@ -964,6 +969,7 @@ pub async fn scrape_book_diff(
         language: best_match.language.clone(),
         explicit: best_match.explicit.unwrap_or(false),
         abridged: best_match.abridged.unwrap_or(false),
+        genre: None,
     };
     
     // 4. Handle Specific Field Sources (Merge Strategy)
@@ -1085,6 +1091,7 @@ pub async fn scrape_book_diff(
         description: existing_book.description.clone().unwrap_or_default(),
         cover_url: existing_book.cover_url.clone(),
         tags: existing_book.tags.map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()),
+        genre: existing_book.genre.clone(),
     };
     
     // Construct ScrapeMetadata for scraped detail
@@ -1097,6 +1104,7 @@ pub async fn scrape_book_diff(
         description: detail.intro.clone(),
         cover_url: clean_cover_url,
         tags: if detail.tags.is_empty() { None } else { Some(detail.tags.clone()) },
+        genre: detail.genre.clone(),
     };
     
     // Chapter changes (Not implemented yet, returning empty list)
@@ -1132,6 +1140,7 @@ pub async fn apply_scrape_result(
         if let Some(n) = &detail.narrator { book.narrator = Some(n.clone()); }
         if !detail.intro.is_empty() { book.description = Some(detail.intro.clone()); }
         if !detail.tags.is_empty() { book.tags = Some(detail.tags.join(",")); }
+        if let Some(g) = &detail.genre { book.genre = Some(g.clone()); }
         if let Some(url) = &detail.cover_url { 
             book.cover_url = Some(url.clone());
             
@@ -1227,7 +1236,8 @@ pub async fn apply_scrape_result(
             metadata_json.authors = book.author.clone().map(|s| vec![s]).unwrap_or_default();
             metadata_json.narrators = book.narrator.clone().map(|s| vec![s]).unwrap_or_default();
             metadata_json.description = book.description.clone();
-            metadata_json.genres = book.tags.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
+            metadata_json.genres = book.genre.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
+            metadata_json.tags = book.tags.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
             
             // Sync chapters from DB
             let chapter_repo = ChapterRepository::new(state.book_repo.db().clone());
@@ -1326,5 +1336,38 @@ pub async fn move_chapters(
 
     Ok(Json(serde_json::json!({
         "message": "Chapters moved successfully"
+    })))
+}
+
+/// Handler for POST /api/v1/books/:id/write-metadata - Write metadata to audio files
+pub async fn write_book_metadata_to_files(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    user: crate::auth::middleware::AuthUser,
+) -> Result<impl IntoResponse> {
+    if user.role != "admin" {
+        return Err(TingError::PermissionDenied("Admin access required".to_string()));
+    }
+
+    let book = state.book_repo.find_by_id(&id).await?
+        .ok_or_else(|| TingError::NotFound(format!("Book with id {} not found", id)))?;
+
+    // Create task
+    let task = Task::new(
+        format!("写入元数据: {}", book.title.unwrap_or_default()),
+        Priority::Normal,
+        TaskPayload::Custom {
+            task_type: "write_metadata".to_string(),
+            data: serde_json::json!({
+                "book_id": id
+            }),
+        },
+    );
+
+    let task_id = state.task_queue.submit(task).await?;
+
+    Ok(Json(serde_json::json!({
+        "message": "Metadata write task submitted",
+        "task_id": task_id
     })))
 }

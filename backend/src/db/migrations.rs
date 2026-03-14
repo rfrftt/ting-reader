@@ -264,6 +264,12 @@ CREATE INDEX IF NOT EXISTS idx_series_library_id ON series(library_id);
 CREATE INDEX IF NOT EXISTS idx_series_books_series_id ON series_books(series_id);
 "#;
 
+/// Tenth schema migration (version 10)
+const MIGRATION_V10: &str = r#"
+-- Add genre to books
+ALTER TABLE books ADD COLUMN genre TEXT;
+"#;
+
 /// Run all pending database migrations
 ///
 /// This function applies database schema migrations in order.
@@ -358,6 +364,11 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     if current_version < 9 {
         info!("Applying migration v9: Series System");
         apply_migration(conn, 9, MIGRATION_V9)?;
+    }
+
+    if current_version < 10 {
+        info!("Applying migration v10: Genre field");
+        apply_migration(conn, 10, MIGRATION_V10)?;
     }
 
     info!("Database migrations completed successfully");

@@ -10,7 +10,7 @@ use crate::api::handlers::{
     get_config, update_config,
     get_book_chapters, update_chapter,
     batch_update_chapters, scrape_book_diff, apply_scrape_result,
-    merge_books, move_chapters,
+    merge_books, move_chapters, write_book_metadata_to_files,
     generate_regex,
     get_tags,
     get_stats,
@@ -130,6 +130,7 @@ pub fn build_api_routes(state: AppState) -> Router {
         .route("/api/books/:id/scrape-apply", post(apply_scrape_result))
         .route("/api/books/merge", post(merge_books))
         .route("/api/books/chapters/move", post(move_chapters))
+        .route("/api/books/:id/write-metadata", post(write_book_metadata_to_files))
         .route("/api/tools/regex/generate", post(generate_regex))
         .route("/api/books/:id/chapters", get(get_book_chapters))
         .route("/api/books/:id/chapters/batch", put(batch_update_chapters).post(batch_update_chapters))

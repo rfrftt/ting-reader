@@ -21,11 +21,16 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::sync::Arc;
 use std::time::Duration;
+use std::path::PathBuf;
 use tokio::sync::{mpsc, RwLock, Semaphore};
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 use chrono::SecondsFormat;
 use uuid::Uuid;
+
+// Native ID3 support
+use id3::{Tag, TagLike, Version};
+use id3::frame::{Picture, PictureType as Id3PictureType};
 
 /// Task priority levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -209,6 +214,7 @@ pub struct TaskQueue {
     shutdown_rx: Arc<RwLock<mpsc::Receiver<()>>>,
     book_repo: Option<Arc<crate::db::repository::BookRepository>>,
     chapter_repo: Option<Arc<crate::db::repository::ChapterRepository>>,
+    series_repo: Option<Arc<crate::db::repository::SeriesRepository>>,
     library_repo: Option<Arc<LibraryRepository>>,
     scraper_service: Option<Arc<ScraperService>>,
     text_cleaner: Option<Arc<TextCleaner>>,
@@ -218,11 +224,12 @@ pub struct TaskQueue {
     storage_service: Option<Arc<StorageService>>,
     merge_service: Option<Arc<MergeService>>,
     encryption_key: Option<Arc<[u8; 32]>>,
+    temp_dir: std::path::PathBuf,
 }
 
 impl TaskQueue {
     /// Create a new task queue
-    pub fn new(config: TaskQueueConfig, db: Arc<DatabaseManager>) -> Self {
+    pub fn new(config: TaskQueueConfig, db: Arc<DatabaseManager>, temp_dir: PathBuf) -> Self {
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
         
         Self {
@@ -234,6 +241,7 @@ impl TaskQueue {
             shutdown_rx: Arc::new(RwLock::new(shutdown_rx)),
             book_repo: None,
             chapter_repo: None,
+            series_repo: None,
             library_repo: None,
             scraper_service: None,
             text_cleaner: None,
@@ -243,6 +251,7 @@ impl TaskQueue {
             storage_service: None,
             merge_service: None,
             encryption_key: None,
+            temp_dir,
         }
     }
 
@@ -251,9 +260,11 @@ impl TaskQueue {
         mut self,
         book_repo: Arc<crate::db::repository::BookRepository>,
         chapter_repo: Arc<crate::db::repository::ChapterRepository>,
+        series_repo: Arc<crate::db::repository::SeriesRepository>,
     ) -> Self {
         self.book_repo = Some(book_repo);
         self.chapter_repo = Some(chapter_repo);
+        self.series_repo = Some(series_repo);
         self
     }
 
@@ -910,6 +921,9 @@ impl TaskQueue {
                     "library_scan" => {
                         self.handle_library_scan(data, &task.id).await?;
                     }
+                    "write_metadata" => {
+                        self.handle_write_metadata(data, &task.id).await?;
+                    }
                     _ => {
                         warn!(task_type = %task_type, "Unknown task type");
                         return Err(crate::core::error::TingError::TaskError(
@@ -943,6 +957,8 @@ impl TaskQueue {
             .ok_or_else(|| crate::core::error::TingError::TaskError("Book repository not configured".to_string()))?;
         let chapter_repo = self.chapter_repo.as_ref()
             .ok_or_else(|| crate::core::error::TingError::TaskError("Chapter repository not configured".to_string()))?;
+        let series_repo = self.series_repo.as_ref()
+            .ok_or_else(|| crate::core::error::TingError::TaskError("Series repository not configured".to_string()))?;
         let library_repo = self.library_repo.as_ref()
             .ok_or_else(|| crate::core::error::TingError::TaskError("Library repository not configured".to_string()))?;
 
@@ -961,6 +977,7 @@ impl TaskQueue {
             book_repo.clone(),
             chapter_repo.clone(),
             library_repo.clone(),
+            series_repo.clone(),
             text_cleaner.clone(),
             nfo_manager.clone(),
             audio_streamer.clone(),
@@ -999,6 +1016,222 @@ impl TaskQueue {
         if !result.errors.is_empty() {
             warn!(errors = ?result.errors, "Library scan completed with errors");
         }
+
+        Ok(())
+    }
+
+    /// Handle write metadata task
+    async fn handle_write_metadata(&self, data: &serde_json::Value, task_id: &str) -> Result<()> {
+        let book_id = data["book_id"]
+            .as_str()
+            .ok_or_else(|| crate::core::error::TingError::TaskError("Missing book_id".to_string()))?;
+
+        info!(book_id = %book_id, "Handling write metadata task");
+
+        // Get repositories
+        let book_repo = self.book_repo.as_ref()
+            .ok_or_else(|| crate::core::error::TingError::TaskError("Book repository not configured".to_string()))?;
+        let library_repo = self.library_repo.as_ref()
+            .ok_or_else(|| crate::core::error::TingError::TaskError("Library repository not configured".to_string()))?;
+        let chapter_repo = self.chapter_repo.as_ref()
+            .ok_or_else(|| crate::core::error::TingError::TaskError("Chapter repository not configured".to_string()))?;
+        let plugin_manager = self.plugin_manager.as_ref()
+            .ok_or_else(|| crate::core::error::TingError::TaskError("Plugin manager not configured".to_string()))?;
+
+        let book = book_repo.find_by_id(book_id).await?
+            .ok_or_else(|| crate::core::error::TingError::NotFound(format!("Book with id {} not found", book_id)))?;
+
+        // Check if library is local
+        let library = library_repo.find_by_id(&book.library_id).await?
+            .ok_or_else(|| crate::core::error::TingError::NotFound(format!("Library with id {} not found", book.library_id)))?;
+
+        if library.library_type != "local" {
+            return Err(crate::core::error::TingError::InvalidRequest("Only local libraries are supported for metadata writing".to_string()));
+        }
+
+        // Resolve cover path
+        let mut cover_path_str = None;
+        let mut temp_cover_path = None;
+
+        if let Some(ref url) = book.cover_url {
+            if url.starts_with("http://") || url.starts_with("https://") {
+                // Download to temp
+                let temp_dir = self.temp_dir.join("ting-reader-covers");
+                if !temp_dir.exists() { tokio::fs::create_dir_all(&temp_dir).await.map_err(crate::core::error::TingError::IoError)?; }
+                
+                let ext = std::path::Path::new(url).extension().and_then(|e| e.to_str()).unwrap_or("jpg");
+                let file_name = format!("{}.{}", Uuid::new_v4(), ext);
+                let path = temp_dir.join(file_name);
+                
+                // Download
+                let bytes = reqwest::get(url).await.map_err(|e| crate::core::error::TingError::NetworkError(e.to_string()))?
+                    .bytes().await.map_err(|e| crate::core::error::TingError::NetworkError(e.to_string()))?;
+                
+                tokio::fs::write(&path, bytes).await.map_err(crate::core::error::TingError::IoError)?;
+                temp_cover_path = Some(path.clone());
+                cover_path_str = Some(path.to_string_lossy().to_string());
+            } else {
+                // Local path
+                let path = std::path::Path::new(url);
+                if path.is_absolute() || path.exists() {
+                    cover_path_str = Some(url.clone());
+                } else {
+                     let book_path = std::path::Path::new(&book.path);
+                     let joined = book_path.join(url);
+                     // If joined path exists, use it. Otherwise fallback to original URL
+                     // to avoid double-pathing (e.g. ./storage/./storage/...)
+                     if joined.exists() {
+                         cover_path_str = Some(joined.to_string_lossy().to_string());
+                     } else {
+                         cover_path_str = Some(url.clone());
+                     }
+                }
+            }
+        }
+
+        // Get chapters
+        let chapters = chapter_repo.find_by_book(book_id).await?;
+
+        let mut success_count = 0;
+        let mut error_count = 0;
+        let total_chapters = chapters.len();
+        
+        for (index, chapter) in chapters.iter().enumerate() {
+            // Update progress
+            let progress_msg = format!("正在写入第 {}/{} 章: {}", index + 1, total_chapters, chapter.title.as_deref().unwrap_or(""));
+            let _ = self.task_repo.update_progress(task_id, &progress_msg).await;
+
+            let path = std::path::Path::new(&chapter.path);
+            if !path.exists() { 
+                error_count += 1;
+                continue; 
+            }
+            
+            // Find plugin that supports this format
+            let ext = path.extension().unwrap_or_default().to_string_lossy().to_lowercase();
+            let plugins = plugin_manager.find_plugins_by_type(crate::plugin::types::PluginType::Format).await;
+            
+            // Prioritize native-audio-support if available for this extension
+            let plugin_info = plugins.into_iter()
+                .find(|p| p.supported_extensions.as_ref().map(|e| e.contains(&ext)).unwrap_or(false));
+                
+            if let Some(plugin) = plugin_info {
+                let artist = if let Some(narrator) = &book.narrator {
+                    if !narrator.trim().is_empty() {
+                        narrator.as_str()
+                    } else {
+                        book.author.as_deref().unwrap_or("")
+                    }
+                } else {
+                    book.author.as_deref().unwrap_or("")
+                };
+
+                let metadata = serde_json::json!({
+                    "file_path": chapter.path,
+                    "title": chapter.title.as_deref().unwrap_or(""),
+                    "artist": artist,
+                    "album": book.title.as_deref().unwrap_or(""),
+                    "genre": book.genre.as_deref().unwrap_or(""),
+                    "description": book.description.as_deref().unwrap_or(""),
+                    "cover_path": cover_path_str,
+                });
+
+                match plugin_manager.call_format(&plugin.id, crate::plugin::manager::FormatMethod::WriteMetadata, metadata).await {
+                    Ok(_) => success_count += 1,
+                    Err(e) => {
+                        warn!("Failed to write metadata for {}: {}", chapter.path, e);
+                        error_count += 1;
+                    }
+                }
+            } else {
+                // No plugin found, try native/builtin support
+                if ext == "mp3" {
+                     let path_clone = path.to_path_buf();
+                     let title_clone = chapter.title.clone().unwrap_or_default();
+                     let artist_clone = if let Some(narrator) = &book.narrator {
+                         if !narrator.trim().is_empty() {
+                             narrator.clone()
+                         } else {
+                             book.author.clone().unwrap_or_default()
+                         }
+                     } else {
+                         book.author.clone().unwrap_or_default()
+                     };
+                     let album_clone = book.title.clone().unwrap_or_default();
+                     let genre_clone = book.genre.clone().unwrap_or_default();
+                     let desc_clone = book.description.clone().unwrap_or_default();
+                     let cover_path_str_clone = cover_path_str.clone();
+
+                     // Spawn blocking task for native ID3 write
+                     let native_write_result = tokio::task::spawn_blocking(move || -> Result<()> {
+                         let mut tag = match Tag::read_from_path(&path_clone) {
+                             Ok(t) => t,
+                             Err(_) => Tag::new(),
+                         };
+
+                         tag.set_title(&title_clone);
+                         tag.set_artist(&artist_clone);
+                         tag.set_album(&album_clone);
+                         tag.set_genre(&genre_clone);
+                         
+                         tag.remove_comment(Some("eng"), None);
+                         tag.add_frame(id3::frame::Comment {
+                             lang: "eng".to_string(),
+                             description: "".to_string(),
+                             text: desc_clone,
+                         });
+
+                         if let Some(cp) = cover_path_str_clone {
+                             if let Ok(data) = std::fs::read(&cp) {
+                                  let mime_type = if cp.to_lowercase().ends_with("png") {
+                                      "image/png".to_string()
+                                  } else {
+                                      "image/jpeg".to_string()
+                                  };
+                                  
+                                  tag.remove_all_pictures();
+                                  tag.add_frame(Picture {
+                                      mime_type,
+                                      picture_type: Id3PictureType::CoverFront,
+                                      description: "Cover".to_string(),
+                                      data,
+                                  });
+                             }
+                         }
+
+                         tag.write_to_path(&path_clone, Version::Id3v23)
+                             .map_err(|e| crate::core::error::TingError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+                         
+                         Ok(())
+                     }).await;
+
+                     match native_write_result {
+                         Ok(Ok(_)) => {
+                             info!("Successfully wrote metadata natively for MP3 (fallback): {:?}", path);
+                             success_count += 1;
+                         },
+                         Ok(Err(e)) => {
+                             warn!("Native ID3 write failed for {:?}: {}", path, e);
+                             error_count += 1;
+                         },
+                         Err(e) => {
+                             warn!("Native ID3 task panic for {:?}: {}", path, e);
+                             error_count += 1;
+                         }
+                     }
+                } else {
+                    error_count += 1;
+                }
+            }
+        }
+
+        // Cleanup temp cover
+        if let Some(path) = temp_cover_path {
+            let _ = tokio::fs::remove_file(path).await;
+        }
+
+        let final_msg = format!("元数据写入完成，成功 {} 章，失败 {} 章", success_count, error_count);
+        let _ = self.task_repo.update_progress(task_id, &final_msg).await;
 
         Ok(())
     }

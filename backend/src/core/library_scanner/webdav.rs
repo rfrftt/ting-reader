@@ -520,6 +520,7 @@ impl LibraryScanner {
             skip_intro: 0,
             skip_outro: 0,
             tags: None,
+            genre: None,
             manual_corrected: if manual_corrected { 1 } else { 0 },
             match_pattern: None,
             chapter_regex: None,
@@ -743,7 +744,8 @@ impl LibraryScanner {
             let metadata_json = crate::core::metadata_writer::AudiobookshelfMetadata::new(
                 &book,
                 abs_chapters,
-                extended_meta
+                extended_meta,
+                Vec::new()
             );
             
             if let Err(e) = crate::core::metadata_writer::write_metadata_json(&temp_book_dir, &metadata_json) {

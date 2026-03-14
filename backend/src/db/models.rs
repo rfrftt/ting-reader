@@ -20,6 +20,7 @@ pub struct Book {
     pub path: String,
     pub hash: String,
     pub tags: Option<String>,
+    pub genre: Option<String>,
     pub created_at: String,
     // V5 Migration
     #[serde(default)]

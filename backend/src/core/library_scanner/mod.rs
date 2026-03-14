@@ -4,7 +4,7 @@
 //! and discover audiobook files, creating book and chapter records.
 
 use crate::core::error::{Result, TingError};
-use crate::db::repository::{BookRepository, ChapterRepository, LibraryRepository, TaskRepository, Repository};
+use crate::db::repository::{BookRepository, ChapterRepository, LibraryRepository, TaskRepository, SeriesRepository, Repository};
 use crate::core::services::ScraperService;
 use crate::core::merge_service::MergeService;
 use crate::core::text_cleaner::TextCleaner;
@@ -70,6 +70,7 @@ pub struct LibraryScanner {
     pub(crate) book_repo: Arc<BookRepository>,
     pub(crate) chapter_repo: Arc<ChapterRepository>,
     pub(crate) library_repo: Arc<LibraryRepository>,
+    pub(crate) series_repo: Arc<SeriesRepository>,
     pub(crate) task_repo: Option<Arc<TaskRepository>>,
     pub(crate) text_cleaner: Arc<TextCleaner>,
     pub(crate) nfo_manager: Arc<NfoManager>,
@@ -88,6 +89,7 @@ impl LibraryScanner {
         book_repo: Arc<BookRepository>,
         chapter_repo: Arc<ChapterRepository>,
         library_repo: Arc<LibraryRepository>,
+        series_repo: Arc<SeriesRepository>,
         text_cleaner: Arc<TextCleaner>,
         nfo_manager: Arc<NfoManager>,
         audio_streamer: Arc<AudioStreamer>,
@@ -97,6 +99,7 @@ impl LibraryScanner {
             book_repo,
             chapter_repo,
             library_repo,
+            series_repo,
             task_repo: None,
             text_cleaner,
             nfo_manager,

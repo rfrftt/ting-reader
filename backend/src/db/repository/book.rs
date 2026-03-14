@@ -28,7 +28,7 @@ impl BookRepository {
         self.db.execute(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, library_id, title, author, narrator, cover_url, theme_color, \
-                 description, skip_intro, skip_outro, path, hash, tags, created_at, \
+                 description, skip_intro, skip_outro, path, hash, tags, genre, created_at, \
                  manual_corrected, match_pattern, chapter_regex \
                  FROM books WHERE library_id = ? ORDER BY created_at DESC"
             ).map_err(TingError::DatabaseError)?;
@@ -48,10 +48,11 @@ impl BookRepository {
                     path: row.get(10)?,
                     hash: row.get(11)?,
                     tags: row.get(12)?,
-                    created_at: row.get(13)?,
-                    manual_corrected: row.get(14).unwrap_or(0),
-                    match_pattern: row.get(15).unwrap_or(None),
-                    chapter_regex: row.get(16).unwrap_or(None),
+                    genre: row.get(13)?,
+                    created_at: row.get(14)?,
+                    manual_corrected: row.get(15).unwrap_or(0),
+                    match_pattern: row.get(16).unwrap_or(None),
+                    chapter_regex: row.get(17).unwrap_or(None),
                 })
             }).map_err(TingError::DatabaseError)?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -92,7 +93,7 @@ impl BookRepository {
         self.db.execute(move |conn| {
             conn.query_row(
                 "SELECT id, library_id, title, author, narrator, cover_url, theme_color, \
-                 description, skip_intro, skip_outro, path, hash, tags, created_at, \
+                 description, skip_intro, skip_outro, path, hash, tags, genre, created_at, \
                  manual_corrected, match_pattern, chapter_regex \
                  FROM books WHERE hash = ?",
                 [&hash],
@@ -111,10 +112,11 @@ impl BookRepository {
                         path: row.get(10)?,
                         hash: row.get(11)?,
                         tags: row.get(12)?,
-                        created_at: row.get(13)?,
-                        manual_corrected: row.get(14).unwrap_or(0),
-                        match_pattern: row.get(15).unwrap_or(None),
-                        chapter_regex: row.get(16).unwrap_or(None),
+                        genre: row.get(13)?,
+                        created_at: row.get(14)?,
+                        manual_corrected: row.get(15).unwrap_or(0),
+                        match_pattern: row.get(16).unwrap_or(None),
+                        chapter_regex: row.get(17).unwrap_or(None),
                     })
                 }
             ).optional()
@@ -154,7 +156,7 @@ impl BookRepository {
         self.db.execute(move |conn| {
             conn.query_row(
                 "SELECT id, library_id, title, author, narrator, cover_url, theme_color, \
-                 description, skip_intro, skip_outro, path, hash, tags, created_at, \
+                 description, skip_intro, skip_outro, path, hash, tags, genre, created_at, \
                  manual_corrected, match_pattern, chapter_regex \
                  FROM books WHERE title = ? AND author = ?",
                 [&title, &author],
@@ -173,10 +175,11 @@ impl BookRepository {
                         path: row.get(10)?,
                         hash: row.get(11)?,
                         tags: row.get(12)?,
-                        created_at: row.get(13)?,
-                        manual_corrected: row.get(14).unwrap_or(0),
-                        match_pattern: row.get(15).unwrap_or(None),
-                        chapter_regex: row.get(16).unwrap_or(None),
+                        genre: row.get(13)?,
+                        created_at: row.get(14)?,
+                        manual_corrected: row.get(15).unwrap_or(0),
+                        match_pattern: row.get(16).unwrap_or(None),
+                        chapter_regex: row.get(17).unwrap_or(None),
                     })
                 }
             ).optional()
@@ -196,7 +199,7 @@ impl BookRepository {
         let user_id = user_id.to_string();
         self.db.execute(move |conn| {
             let mut query = "SELECT b.id, b.library_id, b.title, b.author, b.narrator, b.cover_url, b.theme_color, \
-                             b.description, b.skip_intro, b.skip_outro, b.path, b.hash, b.tags, b.created_at, \
+                             b.description, b.skip_intro, b.skip_outro, b.path, b.hash, b.tags, b.genre, b.created_at, \
                              b.manual_corrected, b.match_pattern, b.chapter_regex \
                              FROM books b".to_string();
             // We store params as String to make them easy to handle and Send
@@ -258,10 +261,11 @@ impl BookRepository {
                     path: row.get(10)?,
                     hash: row.get(11)?,
                     tags: row.get(12)?,
-                    created_at: row.get(13)?,
-                    manual_corrected: row.get(14).unwrap_or(0),
-                    match_pattern: row.get(15).unwrap_or(None),
-                    chapter_regex: row.get(16).unwrap_or(None),
+                    genre: row.get(13)?,
+                    created_at: row.get(14)?,
+                    manual_corrected: row.get(15).unwrap_or(0),
+                    match_pattern: row.get(16).unwrap_or(None),
+                    chapter_regex: row.get(17).unwrap_or(None),
                 })
             }).map_err(TingError::DatabaseError)?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -289,7 +293,7 @@ impl Repository<Book> for BookRepository {
         self.db.execute(move |conn| {
             conn.query_row(
                 "SELECT id, library_id, title, author, narrator, cover_url, theme_color, \
-                 description, skip_intro, skip_outro, path, hash, tags, created_at, \
+                 description, skip_intro, skip_outro, path, hash, tags, genre, created_at, \
                  manual_corrected, match_pattern, chapter_regex \
                  FROM books WHERE id = ?",
                 [&id],
@@ -308,10 +312,11 @@ impl Repository<Book> for BookRepository {
                         path: row.get(10)?,
                         hash: row.get(11)?,
                         tags: row.get(12)?,
-                        created_at: row.get(13)?,
-                        manual_corrected: row.get(14).unwrap_or(0),
-                        match_pattern: row.get(15).unwrap_or(None),
-                        chapter_regex: row.get(16).unwrap_or(None),
+                        genre: row.get(13)?,
+                        created_at: row.get(14)?,
+                        manual_corrected: row.get(15).unwrap_or(0),
+                        match_pattern: row.get(16).unwrap_or(None),
+                        chapter_regex: row.get(17).unwrap_or(None),
                     })
                 }
             ).optional()
@@ -323,7 +328,7 @@ impl Repository<Book> for BookRepository {
         self.db.execute(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, library_id, title, author, narrator, cover_url, theme_color, \
-                 description, skip_intro, skip_outro, path, hash, tags, created_at, \
+                 description, skip_intro, skip_outro, path, hash, tags, genre, created_at, \
                  manual_corrected, match_pattern, chapter_regex \
                  FROM books ORDER BY created_at DESC"
             ).map_err(TingError::DatabaseError)?;
@@ -343,10 +348,11 @@ impl Repository<Book> for BookRepository {
                     path: row.get(10)?,
                     hash: row.get(11)?,
                     tags: row.get(12)?,
-                    created_at: row.get(13)?,
-                    manual_corrected: row.get(14).unwrap_or(0),
-                    match_pattern: row.get(15).unwrap_or(None),
-                    chapter_regex: row.get(16).unwrap_or(None),
+                    genre: row.get(13)?,
+                    created_at: row.get(14)?,
+                    manual_corrected: row.get(15).unwrap_or(0),
+                    match_pattern: row.get(16).unwrap_or(None),
+                    chapter_regex: row.get(17).unwrap_or(None),
                 })
             }).map_err(TingError::DatabaseError)?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -361,8 +367,8 @@ impl Repository<Book> for BookRepository {
         self.db.execute(move |conn| {
             conn.execute(
                 "INSERT INTO books (id, library_id, title, author, narrator, cover_url, \
-                 theme_color, description, skip_intro, skip_outro, path, hash, tags, manual_corrected, match_pattern, chapter_regex) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 theme_color, description, skip_intro, skip_outro, path, hash, tags, genre, manual_corrected, match_pattern, chapter_regex) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
                     &book.id,
                     &book.library_id,
@@ -377,6 +383,7 @@ impl Repository<Book> for BookRepository {
                     &book.path,
                     &book.hash,
                     &book.tags,
+                    &book.genre,
                     book.manual_corrected,
                     &book.match_pattern,
                     &book.chapter_regex,
@@ -392,7 +399,7 @@ impl Repository<Book> for BookRepository {
             conn.execute(
                 "UPDATE books SET library_id = ?, title = ?, author = ?, narrator = ?, \
                  cover_url = ?, theme_color = ?, description = ?, skip_intro = ?, \
-                 skip_outro = ?, path = ?, hash = ?, tags = ?, manual_corrected = ?, match_pattern = ?, chapter_regex = ? WHERE id = ?",
+                 skip_outro = ?, path = ?, hash = ?, tags = ?, genre = ?, manual_corrected = ?, match_pattern = ?, chapter_regex = ? WHERE id = ?",
                 rusqlite::params![
                     &book.library_id,
                     &book.title,
@@ -406,6 +413,7 @@ impl Repository<Book> for BookRepository {
                     &book.path,
                     &book.hash,
                     &book.tags,
+                    &book.genre,
                     book.manual_corrected,
                     &book.match_pattern,
                     &book.chapter_regex,

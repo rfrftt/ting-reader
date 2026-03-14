@@ -208,7 +208,7 @@ impl LibraryScanner {
         }
 
         // 3. Extract Metadata
-        let (quick_title, _) = self.text_cleaner.clean_chapter_title(dir.file_name().and_then(|n| n.to_str()).unwrap_or("Unknown"), None);
+        let (_quick_title, _) = self.text_cleaner.clean_chapter_title(dir.file_name().and_then(|n| n.to_str()).unwrap_or("Unknown"), None);
 
         // Extended fields
         let mut subtitle: Option<String> = None;
@@ -221,62 +221,58 @@ impl LibraryScanner {
         let mut explicit: bool = false;
         let mut abridged: bool = false;
         let mut json_tags: Vec<String> = Vec::new();
+        let mut json_series: Vec<String> = Vec::new();
         let mut json_chapters: Option<Vec<crate::core::metadata_writer::AudiobookshelfChapter>> = None;
 
-        let (title, author, narrator, description, tags, cover_url, theme_color) = if is_manual_corrected {
-             // If manual corrected, fetch existing values
+        // 1. Extract from files/NFO
+        let (mut title, mut author, mut narrator, mut description, mut tags, mut genre, mut cover_url, source) = self.extract_metadata(dir, files, scraper_config).await;
+
+        // 2. Read metadata.json (Overrides NFO/Audio)
+        if let Ok(Some(meta)) = crate::core::metadata_writer::read_metadata_json(dir) {
+            if let Some(t) = meta.title { if !t.trim().is_empty() { title = t; } }
+            if !meta.authors.is_empty() { author = Some(meta.authors[0].clone()); }
+            if !meta.narrators.is_empty() { narrator = Some(meta.narrators[0].clone()); }
+            if let Some(desc) = meta.description { if !desc.trim().is_empty() { description = Some(desc); } }
+            if !meta.genres.is_empty() { genre = Some(meta.genres.join(",")); }
+            if !meta.tags.is_empty() { 
+                json_tags = meta.tags.clone();
+                tags = Some(meta.tags.join(","));
+            }
+            if !meta.series.is_empty() { json_series = meta.series; }
+            
+            subtitle = meta.subtitle;
+            published_year = meta.published_year;
+            published_date = meta.published_date;
+            publisher = meta.publisher;
+            isbn = meta.isbn;
+            asin = meta.asin;
+            language = meta.language;
+            if meta.explicit { explicit = true; }
+            if meta.abridged { abridged = true; }
+            if !meta.chapters.is_empty() { json_chapters = Some(meta.chapters); }
+        }
+
+        if author.is_none() { author = Some("Unknown".to_string()); }
+
+        // 3. Apply Manual Correction or Existing Data
+        if is_manual_corrected {
              if let Some(id) = &existing_book_id {
                 if let Ok(Some(book)) = self.book_repo.find_by_id(id).await {
-                    (
-                        book.title.unwrap_or(quick_title.clone()),
-                        book.author,
-                        book.narrator,
-                        book.description,
-                        book.tags,
-                        book.cover_url,
-                        book.theme_color
-                    )
-                } else {
-                    (quick_title.clone(), None, None, None, None, None, None)
+                    // Use existing values if present, otherwise fall back to extracted
+                    title = book.title.unwrap_or(title);
+                    if book.author.is_some() { author = book.author; }
+                    if book.narrator.is_some() { narrator = book.narrator; }
+                    if book.description.is_some() { description = book.description; }
+                    if book.tags.is_some() { tags = book.tags; }
+                    if book.genre.is_some() { genre = book.genre; }
+                    if book.cover_url.is_some() { cover_url = book.cover_url; }
+                    // theme_color will be recalculated if cover_url changed later
                 }
-             } else {
-                 (quick_title.clone(), None, None, None, None, None, None)
              }
         } else {
-            // Extract from files/NFO
-            let (t, a, n, d, tg, c, source) = self.extract_metadata(dir, files, scraper_config).await;
-            let mut title = t;
-            let mut author = a;
-            let mut narrator = n;
-            let mut description = d;
-            let mut tags = tg;
-            let mut cover_url = c;
-            
-            // Read metadata.json
-            if let Ok(Some(meta)) = crate::core::metadata_writer::read_metadata_json(dir) {
-                if let Some(t) = meta.title { if !t.trim().is_empty() { title = t; } }
-                if !meta.authors.is_empty() { author = Some(meta.authors[0].clone()); }
-                if !meta.narrators.is_empty() { narrator = Some(meta.narrators[0].clone()); }
-                if let Some(desc) = meta.description { if !desc.trim().is_empty() { description = Some(desc); } }
-                if !meta.genres.is_empty() { tags = Some(meta.genres.join(",")); }
-                if !meta.tags.is_empty() { json_tags = meta.tags; }
-                
-                subtitle = meta.subtitle;
-                published_year = meta.published_year;
-                published_date = meta.published_date;
-                publisher = meta.publisher;
-                isbn = meta.isbn;
-                asin = meta.asin;
-                language = meta.language;
-                if meta.explicit { explicit = true; }
-                if meta.abridged { abridged = true; }
-                if !meta.chapters.is_empty() { json_chapters = Some(meta.chapters); }
-            }
-
-            if author.is_none() { author = Some("Unknown".to_string()); }
-
-            // Scraper
+            // Scraper logic (only if not manual corrected)
             if let Some(scraper) = &self.scraper_service {
+                // ... (Existing Scraper Logic)
                 // Check existing book by Title+Author to avoid dups if this is a new scan
                 if existing_book_id.is_none() {
                      if let Some(ref a) = author {
@@ -287,21 +283,23 @@ impl LibraryScanner {
                             } else {
                                 existing_book_id = Some(existing_book.id.clone());
                                 if existing_book.manual_corrected == 1 {
-                                    is_manual_corrected = true;
-                                    // Use existing values
+                                    // It was actually manual corrected!
+                                    // Re-apply manual correction logic
                                     title = existing_book.title.unwrap_or(title);
-                                    author = existing_book.author;
-                                    narrator = existing_book.narrator;
-                                    description = existing_book.description;
-                                    tags = existing_book.tags;
-                                    cover_url = existing_book.cover_url;
+                                    if existing_book.author.is_some() { author = existing_book.author; }
+                                    if existing_book.narrator.is_some() { narrator = existing_book.narrator; }
+                                    if existing_book.description.is_some() { description = existing_book.description; }
+                                    if existing_book.tags.is_some() { tags = existing_book.tags; }
+                                    if existing_book.genre.is_some() { genre = existing_book.genre; }
+                                    if existing_book.cover_url.is_some() { cover_url = existing_book.cover_url; }
                                 }
                             }
                         }
                     }
                 }
 
-                if !is_manual_corrected {
+                // If still not manual corrected (or we didn't find existing one), try scrape
+                if existing_book_id.is_none() || (existing_book_id.is_some() && !is_manual_corrected) {
                     let needs_scrape = description.is_none() || published_year.is_none();
                     if needs_scrape {
                         self.update_progress(task_id, format!("Scraping metadata for: {}", title)).await;
@@ -309,6 +307,13 @@ impl LibraryScanner {
                             Ok(detail) => {
                                 if !detail.intro.is_empty() && (source == MetadataSource::Fallback || description.is_none()) { description = Some(detail.intro); }
                                 if !detail.tags.is_empty() && (source == MetadataSource::Fallback || tags.is_none()) { tags = Some(detail.tags.join(",")); }
+                                
+                                if let Some(g) = detail.genre {
+                                    if !g.trim().is_empty() && (source == MetadataSource::Fallback || genre.is_none()) {
+                                        genre = Some(g);
+                                    }
+                                }
+
                                 if detail.cover_url.is_some() && (source == MetadataSource::Fallback || cover_url.is_none()) { cover_url = detail.cover_url; }
                                 if detail.narrator.is_some() && (source == MetadataSource::Fallback || narrator.is_none()) { narrator = detail.narrator; }
                                 if !detail.author.is_empty() && (source == MetadataSource::Fallback || author.as_deref() == Some("Unknown") || author.is_none()) { author = Some(detail.author); }
@@ -328,21 +333,19 @@ impl LibraryScanner {
                     }
                 }
             }
+        }
 
-            // Theme Color
-            let mut theme_color = None;
-            if let Some(ref url) = cover_url {
-                let cover_path = if url.starts_with("http") { url.clone() } else {
-                    let p = Path::new(url);
-                    if p.exists() { url.clone() } else { dir.join(url).to_string_lossy().to_string() }
-                };
-                if let Ok(Some(color)) = crate::core::color::calculate_theme_color_with_client(&cover_path, &self.http_client).await {
-                    theme_color = Some(color);
-                }
+        // Theme Color
+        let mut theme_color = None;
+        if let Some(ref url) = cover_url {
+            let cover_path = if url.starts_with("http") { url.clone() } else {
+                let p = Path::new(url);
+                if p.exists() { url.clone() } else { dir.join(url).to_string_lossy().to_string() }
+            };
+            if let Ok(Some(color)) = crate::core::color::calculate_theme_color_with_client(&cover_path, &self.http_client).await {
+                theme_color = Some(color);
             }
-            
-            (title, author, narrator, description, tags, cover_url, theme_color)
-        };
+        }
 
         // 4. Create/Update Book
         let book_id = existing_book_id.unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -362,6 +365,7 @@ impl LibraryScanner {
             skip_intro: 0,
             skip_outro: 0,
             tags: tags.clone(),
+            genre: genre.clone(),
             manual_corrected: if is_manual_corrected { 1 } else { 0 },
             match_pattern: None,
             chapter_regex: None,
@@ -381,6 +385,43 @@ impl LibraryScanner {
 
         // 5. Process Chapters
         let chapters_changed = self.process_chapters(&book_id, files, last_scanned, task_id, scraper_config.prefer_audio_title, json_chapters).await?;
+
+        // 5.1 Process Series
+        if !json_series.is_empty() {
+            for series_title in json_series {
+                if series_title.trim().is_empty() { continue; }
+                
+                // Find or create series
+                let series = if let Some(s) = self.series_repo.find_by_title_and_library(&series_title, library_id).await? {
+                    s
+                } else {
+                    let new_series = crate::db::models::Series {
+                        id: Uuid::new_v4().to_string(),
+                        library_id: library_id.to_string(),
+                        title: series_title.clone(),
+                        author: author.clone(),
+                        narrator: narrator.clone(),
+                        cover_url: cover_url.clone(),
+                        description: None,
+                        created_at: chrono::Utc::now().to_rfc3339(),
+                        updated_at: chrono::Utc::now().to_rfc3339(),
+                    };
+                    self.series_repo.create(&new_series).await?;
+                    new_series
+                };
+                
+                // Link book to series if not already linked
+                let books = self.series_repo.find_books_by_series(&series.id).await?;
+                if !books.iter().any(|(b, _)| b.id == book_id) {
+                     let order = books.len() as i32 + 1;
+                     self.series_repo.add_book(crate::db::models::SeriesBook {
+                         series_id: series.id,
+                         book_id: book_id.clone(),
+                         book_order: order,
+                     }).await?;
+                }
+            }
+        }
 
         // 6. Write NFO/Metadata
         if scraper_config.nfo_writing_enabled {
@@ -417,7 +458,12 @@ impl LibraryScanner {
                 subtitle, published_year, published_date, publisher, isbn, asin, language,
                 explicit, abridged, tags: json_tags,
             };
-            let metadata_json = crate::core::metadata_writer::AudiobookshelfMetadata::new(&book, abs_chapters, extended_meta);
+            
+            // Get series for this book
+            let series_list = self.series_repo.find_series_by_book(&book_id).await.unwrap_or_default();
+            let series_titles: Vec<String> = series_list.into_iter().map(|s| s.title).collect();
+            
+            let metadata_json = crate::core::metadata_writer::AudiobookshelfMetadata::new(&book, abs_chapters, extended_meta, series_titles);
             if let Err(e) = crate::core::metadata_writer::write_metadata_json(dir, &metadata_json) {
                 warn!("Failed to write metadata.json: {}", e);
             }
@@ -426,7 +472,7 @@ impl LibraryScanner {
         Ok((book_id, if chapters_changed { ScanStatus::Updated } else { status }))
     }
 
-    async fn extract_metadata(&self, dir: &Path, files: &[PathBuf], scraper_config: &crate::db::models::ScraperConfig) -> (String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, MetadataSource) {
+    async fn extract_metadata(&self, dir: &Path, files: &[PathBuf], scraper_config: &crate::db::models::ScraperConfig) -> (String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, MetadataSource) {
         // Try NFO
         let nfo_path = dir.join("book.nfo");
         if let Ok(meta) = self.nfo_manager.read_book_nfo(&nfo_path) {
@@ -436,6 +482,7 @@ impl LibraryScanner {
                 meta.narrator,
                 meta.intro,
                 Some(meta.tags.items.join(",")),
+                Some(meta.genre.items.join(",")),
                 meta.cover_url,
                 MetadataSource::Nfo
             );
@@ -447,6 +494,7 @@ impl LibraryScanner {
         let mut narrator = None;
         let mut description = None;
         let tags = None;
+        let mut genre = None;
         let mut cover_url_from_plugin = None;
         let mut source = MetadataSource::Fallback;
 
@@ -496,6 +544,12 @@ impl LibraryScanner {
                             if narrator.is_none() {
                                 narrator = Some(c);
                             }
+                        }
+                    }
+                    
+                    if let Some(g) = meta.genre {
+                        if !g.trim().is_empty() {
+                            genre = Some(g);
                         }
                     }
                 }
@@ -576,6 +630,12 @@ impl LibraryScanner {
                         if let Some(d) = result.get("description").and_then(|v| v.as_str()) {
                             if !d.trim().is_empty() {
                                 description = Some(d.to_string());
+                            }
+                        }
+                        
+                        if let Some(g) = result.get("genre").and_then(|v| v.as_str()) {
+                            if !g.trim().is_empty() {
+                                genre = Some(g.to_string());
                             }
                         }
                         
@@ -664,7 +724,7 @@ impl LibraryScanner {
         
         // --- FIXED COVER EXTRACTION LOGIC END ---
 
-        (title, author, narrator, description, tags, cover_url, source)
+        (title, author, narrator, description, tags, genre, cover_url, source)
     }
 
     fn extract_and_save_cover(&self, audio_path: &Path, book_dir: &Path) -> Option<String> {

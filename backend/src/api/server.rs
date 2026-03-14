@@ -125,8 +125,9 @@ impl ApiServer {
         let task_queue = Arc::new(crate::core::task_queue::TaskQueue::new(
             config.task_queue.clone(),
             db.clone(),
+            config.storage.temp_dir.clone(),
         )
-        .with_repositories(book_repo.clone(), chapter_repo.clone())
+        .with_repositories(book_repo.clone(), chapter_repo.clone(), series_repo.clone())
         .with_library_repo(library_repo.clone())
         .with_scraper_service(scraper_service.clone())
         .with_text_cleaner(text_cleaner.clone())

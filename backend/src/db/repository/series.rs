@@ -46,6 +46,66 @@ impl SeriesRepository {
         }).await
     }
 
+    /// Find series by title and library
+    pub async fn find_by_title_and_library(&self, title: &str, library_id: &str) -> Result<Option<Series>> {
+        let title = title.to_string();
+        let library_id = library_id.to_string();
+        self.db.execute(move |conn| {
+            conn.query_row(
+                "SELECT id, library_id, title, author, narrator, cover_url, description, created_at, updated_at \
+                 FROM series WHERE title = ? AND library_id = ?",
+                rusqlite::params![&title, &library_id],
+                |row| {
+                    Ok(Series {
+                        id: row.get(0)?,
+                        library_id: row.get(1)?,
+                        title: row.get(2)?,
+                        author: row.get(3)?,
+                        narrator: row.get(4)?,
+                        cover_url: row.get(5)?,
+                        description: row.get(6)?,
+                        created_at: row.get(7)?,
+                        updated_at: row.get(8)?,
+                    })
+                }
+            ).optional()
+            .map_err(TingError::DatabaseError)
+        }).await
+    }
+
+    /// Find series for a book
+    pub async fn find_series_by_book(&self, book_id: &str) -> Result<Vec<Series>> {
+        let book_id = book_id.to_string();
+        self.db.execute(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT s.id, s.library_id, s.title, s.author, s.narrator, s.cover_url, s.description, s.created_at, s.updated_at \
+                 FROM series s \
+                 JOIN series_books sb ON s.id = sb.series_id \
+                 WHERE sb.book_id = ?"
+            ).map_err(TingError::DatabaseError)?;
+
+            let series = stmt.query_map([&book_id], |row| {
+                Ok(Series {
+                    id: row.get(0)?,
+                    library_id: row.get(1)?,
+                    title: row.get(2)?,
+                    author: row.get(3)?,
+                    narrator: row.get(4)?,
+                    cover_url: row.get(5)?,
+                    description: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            }).map_err(TingError::DatabaseError)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(TingError::DatabaseError)?;
+
+            Ok(series)
+        }).await
+    }
+
+
+
     /// Find books in a series
     pub async fn find_books_by_series(&self, series_id: &str) -> Result<Vec<(Book, i32)>> {
         let series_id = series_id.to_string();
@@ -79,6 +139,7 @@ impl SeriesRepository {
                     manual_corrected: row.get(14).unwrap_or(0),
                     match_pattern: row.get(15).unwrap_or(None),
                     chapter_regex: row.get(16).unwrap_or(None),
+                    genre: None,
                 };
                 let order: i32 = row.get(17)?;
                 Ok((book, order))

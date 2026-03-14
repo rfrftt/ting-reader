@@ -94,6 +94,7 @@ impl BookService {
             path: request.path,
             hash: request.hash,
             tags: request.tags,
+            genre: None,
             created_at: now,
             manual_corrected: 0,
             match_pattern: None,
@@ -741,6 +742,7 @@ impl ScraperService {
                             language: item.language.clone(),
                             explicit: item.explicit.unwrap_or(false),
                             abridged: item.abridged.unwrap_or(false),
+                            genre: None,
                         };
                         
                         source_results.insert(source_id, detail);
@@ -776,6 +778,7 @@ impl ScraperService {
             language: None,
             explicit: false,
             abridged: false,
+            genre: None,
         };
         
         // Helper to get effective sources (specific + default fallback)

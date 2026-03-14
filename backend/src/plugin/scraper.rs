@@ -243,6 +243,10 @@ pub struct BookDetail {
     /// Tags or categories
     #[serde(default)]
     pub tags: Vec<String>,
+
+    /// Genre
+    #[serde(default)]
+    pub genre: Option<String>,
     
     /// Total number of chapters
     pub chapter_count: u32,
