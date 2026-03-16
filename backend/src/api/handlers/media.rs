@@ -892,7 +892,7 @@ pub async fn stream_chapter(
         let mime_type = "audio/mp4"; 
 
         // 6. Construct Lazy Stream Chain
-    let (stream, _, _, _, _, _) = create_decrypted_stream(
+    let (stream, _, content_length, _, _, _) = create_decrypted_stream(
         &state, &chapter, &library, &plugin, range_header.map(|s| s.to_string())
     ).await?;
 
@@ -904,7 +904,7 @@ pub async fn stream_chapter(
             StatusCode::PARTIAL_CONTENT,
             [
                 (header::CONTENT_TYPE, mime_type.to_string()),
-                // (header::CONTENT_LENGTH, content_length.to_string()), // Removed to allow chunked transfer encoding for decrypted streams
+                (header::CONTENT_LENGTH, content_length.to_string()),
                 (header::CONTENT_RANGE, format!("bytes {}-{}/{}", start, end_inclusive, logic_size)),
                 (header::ACCEPT_RANGES, "bytes".to_string()),
                 (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
@@ -917,7 +917,7 @@ pub async fn stream_chapter(
                 StatusCode::OK,
                 [
                     (header::CONTENT_TYPE, mime_type.to_string()),
-                    // (header::CONTENT_LENGTH, content_length.to_string()), // Removed to allow chunked transfer encoding for decrypted streams
+                    (header::CONTENT_LENGTH, content_length.to_string()),
                     (header::ACCEPT_RANGES, "bytes".to_string()),
                     (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
                     ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
