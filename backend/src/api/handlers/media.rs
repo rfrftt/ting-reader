@@ -843,62 +843,8 @@ pub async fn stream_chapter(
             TingError::PluginExecutionError(format!("Failed to get decryption plan: {}", e))
         })?;
         
-        let mut plan: DecryptionPlan = serde_json::from_value(plan_json)
+        let plan: DecryptionPlan = serde_json::from_value(plan_json)
             .map_err(|e| TingError::SerializationError(format!("Invalid decryption plan: {}", e)))?;
-
-        // 4.5 Try to calculate exact decrypted size if plugin supports it
-        if plan.total_size.is_none() {
-             // Find encrypted segment to locate the last block
-             let encrypted_segment = plan.segments.iter().find(|s| matches!(s, DecryptionSegment::Encrypted { .. }));
-             
-             if let Some(DecryptionSegment::Encrypted { offset, length, .. }) = encrypted_segment {
-                 let encrypted_end = offset + *length as u64;
-                 if *length >= 16 {
-                     let last_block_offset = encrypted_end - 16;
-                     
-                     // Read last block
-                     let read_res: Result<(Box<dyn AsyncRead + Send + Unpin>, u64)> = if cache_path.exists() {
-                         let (reader, size) = state.storage_service.get_local_reader(&cache_path, Some((last_block_offset, encrypted_end))).await?;
-                         Ok((Box::new(reader) as Box<dyn AsyncRead + Send + Unpin>, size))
-                     } else if library.library_type == "local" {
-                         let (reader, size) = state.storage_service.get_local_reader(std::path::Path::new(&chapter.path), Some((last_block_offset, encrypted_end))).await?;
-                         Ok((Box::new(reader) as Box<dyn AsyncRead + Send + Unpin>, size))
-                     } else {
-                         state.storage_service.get_webdav_reader(&library, &chapter.path, Some((last_block_offset, encrypted_end)), state.encryption_key.as_ref()).await
-                             .map_err(|e| TingError::NotFound(format!("WebDAV file not found: {}", e)))
-                     };
-
-                     if let Ok((reader, _)) = read_res {
-                         let mut last_block_reader = Box::new(reader.take(16)) as Box<dyn AsyncRead + Send + Unpin>;
-                         let mut last_block = Vec::new();
-                         if let Ok(_) = last_block_reader.read_to_end(&mut last_block).await {
-                             if last_block.len() == 16 {
-                                 let last_block_base64 = base64::engine::general_purpose::STANDARD.encode(&last_block);
-                                 
-                                 match state.plugin_manager.call_format(
-                                     &plugin.id,
-                                     FormatMethod::GetDecryptedSize,
-                                     serde_json::json!({
-                                         "header_base64": header_base64,
-                                         "last_block_base64": last_block_base64
-                                     })
-                                 ).await {
-                                     Ok(val) => {
-                                         if let Some(s) = val.as_u64() {
-                                             tracing::info!("Plugin calculated exact decrypted size: {}", s);
-                                             plan.total_size = Some(s);
-                                         }
-                                     },
-                                     Err(e) => {
-                                         tracing::warn!("Plugin failed to calculate decrypted size: {}", e);
-                                     }
-                                 }
-                             }
-                         }
-                     }
-                 }
-             }
-        }
 
         // 5. Calculate Logic Size and Range
         // First calculate total logical size to handle Range requests correctly
@@ -934,7 +880,7 @@ pub async fn stream_chapter(
             (0, logic_size)
         };
         
-        let content_length = end.saturating_sub(start);
+        let _content_length = end.saturating_sub(start);
         // Important: Use audio/mp4 for XM format streaming!
         let mime_type = "audio/mp4"; 
 
@@ -945,8 +891,7 @@ pub async fn stream_chapter(
         let use_range = range_header.is_some() && plan.total_size.is_some();
 
         let (stream, _, _, _, _, _) = create_decrypted_stream(
-            &state, &chapter, &library, &plugin, if use_range { range_header.map(|s| s.to_string()) } else { None },
-            plan.total_size
+            &state, &chapter, &library, &plugin, if use_range { range_header.map(|s| s.to_string()) } else { None }
         ).await?;
 
         let body = Body::from_stream(stream);
@@ -957,7 +902,7 @@ pub async fn stream_chapter(
                 StatusCode::PARTIAL_CONTENT,
                 [
                     (header::CONTENT_TYPE, mime_type.to_string()),
-                    (header::CONTENT_LENGTH, content_length.to_string()),
+                    // (header::CONTENT_LENGTH, content_length.to_string()), // Removed to allow chunked transfer encoding for decrypted streams
                     (header::CONTENT_RANGE, format!("bytes {}-{}/{}", start, end_inclusive, logic_size)),
                     (header::ACCEPT_RANGES, "bytes".to_string()),
                     (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
@@ -970,7 +915,7 @@ pub async fn stream_chapter(
                 StatusCode::OK,
                 [
                     (header::CONTENT_TYPE, mime_type.to_string()),
-                    (header::CONTENT_LENGTH, content_length.to_string()),
+                    // (header::CONTENT_LENGTH, content_length.to_string()), // Removed to allow chunked transfer encoding for decrypted streams
                     (header::ACCEPT_RANGES, "bytes".to_string()),
                     (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
                     ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
@@ -1068,7 +1013,6 @@ async fn create_decrypted_stream(
     library: &Library,
     plugin: &PluginInfo,
     range_header: Option<String>,
-    total_size_hint: Option<u64>,
 ) -> Result<(futures::stream::BoxStream<'static, std::io::Result<bytes::Bytes>>, String, u64, u64, u64, u64)> {
     use base64::Engine;
     use tokio::io::AsyncReadExt;
@@ -1140,29 +1084,19 @@ async fn create_decrypted_stream(
 
     // 5. Calculate Logic Size
     let mut logic_size = 0;
-    let mut other_len = 0;
-    let mut encrypted_indices = Vec::new();
-
-    for (i, segment) in plan.segments.iter().enumerate() {
+    for segment in &plan.segments {
         match segment {
-            DecryptionSegment::Encrypted { length, .. } => {
-                logic_size += *length as u64;
-                encrypted_indices.push(i);
-            },
+            DecryptionSegment::Encrypted { length, .. } => logic_size += *length as u64,
             DecryptionSegment::Plain { length, offset } => {
-                let len = if *length <= 0 {
-                    total_file_size.saturating_sub(*offset)
+                if *length <= 0 {
+                    logic_size += total_file_size.saturating_sub(*offset);
                 } else {
-                    *length as u64
-                };
-                logic_size += len;
-                other_len += len;
+                    logic_size += *length as u64;
+                }
             }
         }
     }
-    
-    let explicit_total_size = total_size_hint.or(plan.total_size);
-    if let Some(s) = explicit_total_size {
+    if let Some(s) = plan.total_size {
         logic_size = s;
     }
     
@@ -1183,26 +1117,17 @@ async fn create_decrypted_stream(
     let mut stream_chain: Vec<futures::stream::BoxStream<'static, std::result::Result<bytes::Bytes, std::io::Error>>> = Vec::new();
     let mut current_pos = 0;
 
-    for (i, segment) in plan.segments.into_iter().enumerate() {
-        let mut seg_len = match &segment {
-            DecryptionSegment::Encrypted { length, .. } => *length as u64,
+    for segment in plan.segments {
+        let seg_len = match segment {
+            DecryptionSegment::Encrypted { length, .. } => length as u64,
             DecryptionSegment::Plain { length, offset } => {
-                if *length <= 0 {
-                    total_file_size.saturating_sub(*offset)
+                if length <= 0 {
+                    total_file_size.saturating_sub(offset)
                 } else {
-                    *length as u64
+                    length as u64
                 }
             }
         };
-
-        // Adjust seg_len if this is the encrypted segment and we have a total size
-        if let Some(total) = explicit_total_size {
-             if let DecryptionSegment::Encrypted { .. } = &segment {
-                 if encrypted_indices.len() == 1 && encrypted_indices[0] == i {
-                     seg_len = total.saturating_sub(other_len);
-                 }
-             }
-        }
 
         let seg_start = current_pos;
         let seg_end = current_pos + seg_len;
