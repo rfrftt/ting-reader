@@ -687,7 +687,7 @@ pub async fn stream_chapter(
                             StatusCode::PARTIAL_CONTENT,
                             [
                                 (header::CONTENT_TYPE, mime_type),
-                                (header::CONTENT_LENGTH, content_length.to_string()),
+                                // (header::CONTENT_LENGTH, content_length.to_string()), // Removed to allow chunked transfer encoding for encrypted streams
                                 (header::CONTENT_RANGE, format!("bytes {}-{}/{}", start, end - 1, file_size)),
                                 (header::ACCEPT_RANGES, "bytes".to_string()),
                                 (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
@@ -897,7 +897,7 @@ pub async fn stream_chapter(
                 StatusCode::PARTIAL_CONTENT,
                 [
                     (header::CONTENT_TYPE, mime_type.to_string()),
-                    (header::CONTENT_LENGTH, content_length.to_string()),
+                    // (header::CONTENT_LENGTH, content_length.to_string()), // Removed to allow chunked transfer encoding for decrypted streams
                     (header::CONTENT_RANGE, format!("bytes {}-{}/{}", start, end_inclusive, logic_size)),
                     (header::ACCEPT_RANGES, "bytes".to_string()),
                     (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
@@ -910,6 +910,7 @@ pub async fn stream_chapter(
                 StatusCode::OK,
                 [
                     (header::CONTENT_TYPE, mime_type.to_string()),
+                    // (header::CONTENT_LENGTH, content_length.to_string()), // Removed to allow chunked transfer encoding for decrypted streams
                     (header::ACCEPT_RANGES, "bytes".to_string()),
                     (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
                     ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
