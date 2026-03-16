@@ -653,52 +653,63 @@ pub async fn stream_chapter(
     {
         let mut cache = state.preload_cache.write().await;
         if let Some((data, last_access)) = cache.get_mut(&chapter_id) {
-            // Update access time to implement LRU (keep frequently accessed chapters in memory)
-            *last_access = std::time::Instant::now();
+            // Check if we need to use a format plugin even for cached files (source file is cached)
+            let plugin_info = state.plugin_manager.find_plugin_for_format(std::path::Path::new(&chapter.path)).await;
             
-            tracing::info!(chapter_id = %chapter_id, "Serving from preload cache (memory)");
-            let data = data.clone(); // Clone bytes (cheap reference count increment)
-            // Drop write lock early
-            drop(cache);
-            
-            let file_size = data.len() as u64;
-            let mime_type = mime_guess::from_path(&chapter.path).first_or_octet_stream().to_string();
-            
-            let range_header = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
-            
-            if let Some(range_str) = range_header {
-                 if let Ok(range) = state.audio_streamer.parse_range_header(range_str, file_size) {
-                     let start = range.start as usize;
-                     let end = range.end as usize;
-                     let content_length = (end - start) as u64;
-                     let body = data[start..end].to_vec();
-                     
-                     return Ok((
-                        StatusCode::PARTIAL_CONTENT,
-                        [
-                            (header::CONTENT_TYPE, mime_type),
-                            (header::CONTENT_LENGTH, content_length.to_string()),
-                            (header::CONTENT_RANGE, format!("bytes {}-{}/{}", start, end - 1, file_size)),
-                            (header::ACCEPT_RANGES, "bytes".to_string()),
-                            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
-                            ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
-                        ],
-                        body,
-                    ).into_response());
-                 }
+            if plugin_info.is_some() {
+                // If a plugin handles this format, we CANNOT use the preload cache directly if it contains encrypted data.
+                // The current preload implementation stores raw bytes.
+                // TODO: Implement decrypted preload cache or handle decryption here.
+                // For now, skip preload cache for plugin-handled files to avoid sending encrypted data to client.
+                tracing::info!(chapter_id = %chapter_id, "Skipping preload cache for plugin-handled file");
+            } else {
+                // Update access time to implement LRU (keep frequently accessed chapters in memory)
+                *last_access = std::time::Instant::now();
+                
+                tracing::info!(chapter_id = %chapter_id, "Serving from preload cache (memory)");
+                let data = data.clone(); // Clone bytes (cheap reference count increment)
+                // Drop write lock early
+                drop(cache);
+                
+                let file_size = data.len() as u64;
+                let mime_type = mime_guess::from_path(&chapter.path).first_or_octet_stream().to_string();
+                
+                let range_header = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
+                
+                if let Some(range_str) = range_header {
+                     if let Ok(range) = state.audio_streamer.parse_range_header(range_str, file_size) {
+                         let start = range.start as usize;
+                         let end = range.end as usize;
+                         let content_length = (end - start) as u64;
+                         let body = data[start..end].to_vec();
+                         
+                         return Ok((
+                            StatusCode::PARTIAL_CONTENT,
+                            [
+                                (header::CONTENT_TYPE, mime_type),
+                                (header::CONTENT_LENGTH, content_length.to_string()),
+                                (header::CONTENT_RANGE, format!("bytes {}-{}/{}", start, end - 1, file_size)),
+                                (header::ACCEPT_RANGES, "bytes".to_string()),
+                                (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
+                                ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
+                            ],
+                            body,
+                        ).into_response());
+                     }
+                }
+                
+                return Ok((
+                    StatusCode::OK,
+                    [
+                        (header::CONTENT_TYPE, mime_type),
+                        (header::CONTENT_LENGTH, file_size.to_string()),
+                        (header::ACCEPT_RANGES, "bytes".to_string()),
+                        (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
+                        ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
+                    ],
+                    data.to_vec(),
+                ).into_response());
             }
-            
-            return Ok((
-                StatusCode::OK,
-                [
-                    (header::CONTENT_TYPE, mime_type),
-                    (header::CONTENT_LENGTH, file_size.to_string()),
-                    (header::ACCEPT_RANGES, "bytes".to_string()),
-                    (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
-                    ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
-                ],
-                data.to_vec(),
-            ).into_response());
         }
     }
     
