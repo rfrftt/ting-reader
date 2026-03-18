@@ -8,12 +8,13 @@ import ExpandableTitle from './ExpandableTitle';
 interface SeriesCardProps {
   series: Series;
   onClick?: () => void;
+  coverShape?: 'rect' | 'square';
 }
 
-const SeriesCard: React.FC<SeriesCardProps> = ({ series, onClick }) => {
+const SeriesCard: React.FC<SeriesCardProps> = ({ series, onClick, coverShape = 'rect' }) => {
   const content = (
     <>
-      <div className="relative aspect-[3/4] overflow-visible mb-1">
+      <div className={`relative ${coverShape === 'square' ? 'aspect-square' : 'aspect-[3/4]'} overflow-visible mb-1`}>
         {/* Stack effect - subtle layers behind */}
         <div className="absolute top-0 inset-x-2 bottom-2 bg-slate-200 dark:bg-slate-700 rounded-md transform -translate-y-1.5 translate-x-1 rotate-1 shadow-sm"></div>
         <div className="absolute top-0 inset-x-1 bottom-1 bg-slate-300 dark:bg-slate-600 rounded-md transform -translate-y-0.5 -translate-x-0.5 -rotate-1 shadow-sm"></div>
@@ -23,6 +24,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({ series, onClick }) => {
             <img 
               src={getCoverUrl(series.coverUrl, series.libraryId)} 
               alt={series.title}
+              loading="lazy"
               referrerPolicy="no-referrer"
               className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
               onError={(e) => {

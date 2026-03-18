@@ -17,6 +17,8 @@ export interface ScraperConfig {
   nfo_writing_enabled?: boolean;
   metadata_writing_enabled?: boolean;
   prefer_audio_title?: boolean;
+  metadataPriority?: string[];
+  extractAudioCover?: boolean;
 }
 
 export interface Library {
@@ -40,6 +42,8 @@ export interface Book {
   narrator?: string;
   description?: string;
   coverUrl?: string;
+  duration?: number;
+  size?: number;
   themeColor?: string;
   path: string;
   hash: string;
