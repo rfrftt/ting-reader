@@ -11,6 +11,9 @@ interface PlayerState {
   playbackSpeed: number;
   volume: number;
   themeColor: string;
+  isExpanded: boolean;
+  isCollapsed: boolean;
+  isSeriesEditing: boolean;
   
   // Actions
   playBook: (book: Book, chapters: Chapter[], startChapterId?: string) => void;
@@ -24,6 +27,9 @@ interface PlayerState {
   prevChapter: () => void;
   playChapter: (book: Book, chapters: Chapter[], chapter: Chapter, resumePosition?: number) => void;
   setIsPlaying: (isPlaying: boolean) => void;
+  setIsExpanded: (isExpanded: boolean) => void;
+  setIsCollapsed: (isCollapsed: boolean) => void;
+  setIsSeriesEditing: (isSeriesEditing: boolean) => void;
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
@@ -36,8 +42,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       playbackSpeed: 1.0,
       volume: 1.0,
       themeColor: '#F2EDE4', // Default background color
+      isExpanded: false,
+      isCollapsed: false,
+      isSeriesEditing: false,
 
       setIsPlaying: (isPlaying) => set({ isPlaying }),
+      setIsExpanded: (isExpanded) => set({ isExpanded }),
+      setIsCollapsed: (isCollapsed) => set({ isCollapsed }),
+      setIsSeriesEditing: (isSeriesEditing) => set({ isSeriesEditing }),
 
       playBook: (book, chapters, startChapterId) => {
         // If no startChapterId is provided, find the most recently played chapter

@@ -324,10 +324,10 @@ const TaskLogsPage: React.FC = () => {
                     </div>
                     <p className="text-xs sm:text-sm text-slate-500 break-all">{formatTaskPayload(task.payload)}</p>
                     {task.message && (
-                      <p className="text-xs sm:text-sm font-medium text-primary-600 dark:text-primary-400 mt-2 flex items-center gap-2">
-                      <Loader2 size={12} className={`sm:w-3.5 sm:h-3.5 ${task.status === 'running' ? 'animate-spin' : ''}`} />
-                      <span className="truncate whitespace-normal sm:whitespace-nowrap">{task.message}</span>
-                    </p>
+                      <p className="text-xs sm:text-sm font-medium text-primary-600 dark:text-primary-400 mt-2 flex items-start sm:items-center gap-2">
+                        {task.status === 'running' && <Loader2 size={12} className="sm:w-3.5 sm:h-3.5 animate-spin shrink-0 mt-0.5 sm:mt-0" />}
+                        <span className="break-all">{task.message}</span>
+                      </p>
                     )}
                     {task.error && (
                       <p className="text-xs text-red-500 mt-2 bg-red-50 dark:bg-red-900/10 p-2 rounded-lg border border-red-100 dark:border-red-900/20 break-all">
