@@ -298,7 +298,7 @@ fn get_client() -> &'static reqwest::Client {
 #[op2(async)]
 #[string]
 pub async fn op_fetch(#[string] url: String, #[serde] options: Option<Value>) -> Result<String, anyhow::Error> {
-    tracing::info!("op_fetch: starting request to {}", url);
+    tracing::info!("op_fetch: 开始请求 {}", url);
     
     let client = get_client();
         
@@ -325,25 +325,25 @@ pub async fn op_fetch(#[string] url: String, #[serde] options: Option<Value>) ->
         }
     }
     
-    tracing::info!("op_fetch: sending request...");
+    tracing::info!("op_fetch: 发送请求...");
     match builder.send().await {
         Ok(resp) => {
             let status = resp.status();
-            tracing::info!("op_fetch: got response status {}", status);
+            tracing::info!("op_fetch: 获得响应状态 {}", status);
             
             match resp.text().await {
                 Ok(text) => {
-                    tracing::info!("op_fetch: request to {} completed, body len: {}", url, text.len());
+                    tracing::info!("op_fetch: 对 {} 的请求已完成，主体长度: {}", url, text.len());
                     Ok(text)
                 },
                 Err(e) => {
-                    tracing::error!("op_fetch: failed to read body from {}: {}", url, e);
+                    tracing::error!("op_fetch: 无法从 {} 读取主体: {}", url, e);
                     Err(e.into())
                 }
             }
         },
         Err(e) => {
-            tracing::error!("op_fetch: request failed to {}: {}", url, e);
+            tracing::error!("op_fetch: 对 {} 的请求失败: {}", url, e);
             Err(e.into())
         }
     }

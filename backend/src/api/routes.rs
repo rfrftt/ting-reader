@@ -8,7 +8,7 @@ use crate::api::handlers::{
     list_tasks, get_task, cancel_task, delete_task, clear_tasks, batch_delete_tasks,
     // System management endpoints
     health_check, get_metrics,
-    get_config, update_config, check_update,
+    get_config, update_config, check_update, get_system_logs, export_system_logs, clear_system_logs,
     get_book_chapters, update_chapter,
     batch_update_chapters, scrape_book_diff, apply_scrape_result,
     merge_books, move_chapters, write_book_metadata_to_files,
@@ -123,6 +123,8 @@ pub fn build_api_routes(state: AppState) -> Router {
         .route("/api/v1/system/metrics", get(get_metrics))
         .route("/api/v1/system/config", get(get_config).put(update_config))
         .route("/api/v1/system/check-update", get(check_update))
+        .route("/api/v1/system/logs", get(get_system_logs).delete(clear_system_logs))
+        .route("/api/v1/system/logs/export", get(export_system_logs))
         // Book CRUD endpoints (without /v1 prefix for frontend compatibility)
         .route("/api/books", get(list_books).post(create_book))
         .route(
@@ -166,6 +168,8 @@ pub fn build_api_routes(state: AppState) -> Router {
         .route("/api/system/metrics", get(get_metrics))
         .route("/api/system/config", get(get_config).put(update_config))
         .route("/api/system/check-update", get(check_update))
+        .route("/api/system/logs", get(get_system_logs).delete(clear_system_logs))
+        .route("/api/system/logs/export", get(export_system_logs))
         // Cache management endpoints
         .route("/api/cache/:chapterId", post(cache_chapter).delete(delete_chapter_cache))
         .route("/api/cache", get(get_cache_list).delete(clear_all_caches))

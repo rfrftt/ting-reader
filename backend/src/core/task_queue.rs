@@ -324,7 +324,7 @@ impl TaskQueue {
 
     /// Recover incomplete tasks from database after system restart
     pub async fn recover_tasks(&self) -> Result<usize> {
-        info!("Recovering incomplete tasks from database");
+        info!("正在从数据库恢复未完成的任务");
 
         // Find all tasks that were queued or running when system shut down
         let mut recovered_count = 0;
@@ -386,7 +386,7 @@ impl TaskQueue {
 
         info!(
             recovered_count = recovered_count,
-            "Task recovery completed"
+            "任务恢复完成"
         );
 
         Ok(recovered_count)
@@ -750,7 +750,7 @@ impl TaskQueue {
 
     /// Start the task executor
     pub async fn start(self: Arc<Self>) {
-        info!("Task queue executor started");
+        info!("任务队列执行器已启动");
 
         let mut shutdown_rx = {
             let mut guard = self.shutdown_rx.write().await;
@@ -1250,6 +1250,15 @@ impl TaskQueue {
 
         let final_msg = format!("元数据写入完成，成功 {} 章，失败 {} 章", success_count, error_count);
         let _ = self.task_repo.update_progress(task_id, &final_msg).await;
+
+        tracing::info!(
+            target: "audit::metadata",
+            "书籍 '{}' (ID: {}) 音频文件元数据写入完成：成功 {} 章，失败 {} 章",
+            book.title.as_deref().unwrap_or("未知"),
+            book.id,
+            success_count,
+            error_count
+        );
 
         Ok(())
     }

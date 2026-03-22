@@ -12,7 +12,7 @@ pub async fn calculate_theme_color_from_bytes(bytes: &[u8]) -> Result<Option<Str
 
     // Decode image in a blocking task to avoid blocking the async runtime
     let result = tokio::task::spawn_blocking(move || {
-        tracing::debug!("Color extraction: Loading image from memory ({} bytes)", bytes_vec.len());
+        tracing::debug!("颜色提取：从内存加载图像 ({} 字节)", bytes_vec.len());
         match image::load_from_memory(&bytes_vec) {
             Ok(img) => {
                 // Get palette
@@ -37,13 +37,13 @@ pub async fn calculate_theme_color_from_bytes(bytes: &[u8]) -> Result<Option<Str
                         }
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to extract colors: {:?}", e);
+                        tracing::warn!("提取颜色失败: {:?}", e);
                         None
                     }
                 }
             }
             Err(e) => {
-                tracing::warn!("Failed to decode image: {}", e);
+                tracing::warn!("解码图像失败: {}", e);
                 None
             }
         }
@@ -75,13 +75,13 @@ pub async fn calculate_theme_color(url_or_path: &str) -> Result<Option<String>> 
                 match response.bytes().await {
                     Ok(b) => b.to_vec(),
                     Err(e) => {
-                        tracing::warn!("Failed to download cover image: {}", e);
+                        tracing::warn!("下载封面图像失败: {}", e);
                         return Ok(None);
                     }
                 }
             }
             Err(e) => {
-                tracing::warn!("Failed to fetch cover image: {}", e);
+                tracing::warn!("获取封面图像失败: {}", e);
                 return Ok(None);
             }
         }
@@ -94,7 +94,7 @@ pub async fn calculate_theme_color(url_or_path: &str) -> Result<Option<String>> 
         match tokio::fs::read(path).await {
             Ok(b) => b,
             Err(e) => {
-                tracing::warn!("Failed to read local cover image: {}", e);
+                tracing::warn!("读取本地封面图像失败: {}", e);
                 return Ok(None);
             }
         }
@@ -121,13 +121,13 @@ pub async fn calculate_theme_color_with_client(url_or_path: &str, client: &reqwe
                 match response.bytes().await {
                     Ok(b) => b.to_vec(),
                     Err(e) => {
-                        tracing::warn!("Failed to download cover image: {}", e);
+                        tracing::warn!("下载封面图像失败: {}", e);
                         return Ok(None);
                     }
                 }
             }
             Err(e) => {
-                tracing::warn!("Failed to fetch cover image: {}", e);
+                tracing::warn!("获取封面图像失败: {}", e);
                 return Ok(None);
             }
         }
@@ -140,7 +140,7 @@ pub async fn calculate_theme_color_with_client(url_or_path: &str, client: &reqwe
         match tokio::fs::read(path).await {
             Ok(b) => b,
             Err(e) => {
-                tracing::warn!("Failed to read local cover image: {}", e);
+                tracing::warn!("读取本地封面图像失败: {}", e);
                 return Ok(None);
             }
         }

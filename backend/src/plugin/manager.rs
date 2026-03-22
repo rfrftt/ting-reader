@@ -150,7 +150,7 @@ impl PluginManager {
         let registry = self.registry.read().await;
         for entry in registry.values() {
             if let Err(e) = entry.instance.garbage_collect().await {
-                tracing::warn!("Failed to garbage collect plugin {}: {}", entry.metadata.name, e);
+                tracing::warn!("垃圾回收插件 {} 失败: {}", entry.metadata.name, e);
             }
         }
         
@@ -159,12 +159,12 @@ impl PluginManager {
         // Run in blocking task since malloc_trim can be slow
         tokio::task::spawn_blocking(|| {
             crate::core::utils::release_memory();
-        }).await.unwrap_or_else(|e| tracing::warn!("Failed to release memory: {}", e));
+        }).await.unwrap_or_else(|e| tracing::warn!("释放内存失败: {}", e));
     }
 
     /// Discover and load all plugins from the plugin directory
     pub async fn discover_plugins(&self, plugin_dir: &Path) -> Result<Vec<PluginMetadata>> {
-        info!("Discovering plugins in {}", plugin_dir.display());
+        info!("正在发现插件目录: {}", plugin_dir.display());
         
         let mut discovered = Vec::new();
         
@@ -212,7 +212,7 @@ impl PluginManager {
             if let Some(latest_ver) = latest_version {
                  // Find the path for the latest version
                  if let Some((metadata, path)) = versions.iter().find(|(m, _)| m.version == latest_ver) {
-                     info!("Loading latest version for {}: {}", id, metadata.version);
+                     info!("正在加载最新版本: {}: {}", id, metadata.version);
                      match self.load_plugin(path).await {
                         Ok(plugin_id) => {
                             if let Some(plugin_entry) = self.registry.read().await.get(&plugin_id) {
@@ -278,7 +278,7 @@ impl PluginManager {
         let metadata = self.read_plugin_metadata(plugin_path)?;
         let plugin_id = metadata.instance_id();
         
-        info!("Loading plugin: {} from {}", plugin_id, plugin_path.display());
+        info!("正在加载插件: {} from {}", plugin_id, plugin_path.display());
         
         // Check if already loaded
         {
@@ -379,7 +379,7 @@ impl PluginManager {
         if let Err(e) = self.unload_plugin(plugin_id).await {
             // Only ignore PluginNotFound, others might be important but shouldn't block uninstallation
             if !matches!(e, TingError::PluginNotFound(_)) {
-                tracing::warn!("Error unloading plugin during uninstall: {}", e);
+                tracing::warn!("卸载期间卸载插件出错: {}", e);
             }
         }
         
@@ -440,7 +440,7 @@ impl PluginManager {
 
     /// Reload a plugin
     pub async fn reload_plugin(&self, id: &PluginId) -> Result<()> {
-        tracing::info!(plugin_id = %id, "Reloading plugin");
+        tracing::info!(plugin_id = %id, "正在重新加载插件");
         
         // Get the plugin path and metadata before reloading
         let (plugin_path, _old_metadata) = {
@@ -463,14 +463,14 @@ impl PluginManager {
         
         if new_id == *id {
             // Same version reload - must unload first to avoid ID conflict
-            tracing::info!(plugin_id = %id, "Reloading same version, unloading old instance first");
+            tracing::info!(plugin_id = %id, "重新加载相同版本，首先卸载旧实例");
             
             // 1. Try to load the new instance first (without registering) to verify it works
             match self.load_plugin_instance(&plugin_path, &new_metadata).await {
                 Ok(instance) => {
                     // 2. Unload old version
                     if let Err(e) = self.unload_plugin(id).await {
-                        tracing::error!(plugin_id = %id, error = %e, "Failed to unload old version");
+                        tracing::error!(plugin_id = %id, error = %e, "卸载旧版本失败");
                         return Err(e);
                     }
                     
@@ -489,28 +489,28 @@ impl PluginManager {
                         cache.insert(new_id.clone(), plugin_path);
                     }
                     
-                    tracing::info!(plugin_id = %new_id, "Plugin reloaded successfully (same version)");
+                    tracing::info!(plugin_id = %new_id, "插件成功重新加载 (相同版本)");
                     Ok(())
                 }
                 Err(e) => {
-                    tracing::error!(plugin_id = %id, error = %e, "Failed to load new plugin instance, aborting reload");
+                    tracing::error!(plugin_id = %id, error = %e, "加载新插件实例失败，正在中止重新加载");
                     Err(e)
                 }
             }
         } else {
             // Different version - can use standard atomic reload
-            tracing::info!(old_id = %id, new_id = %new_id, "Reloading with version change");
+            tracing::info!(old_id = %id, new_id = %new_id, "随着版本更改而重新加载");
             
             match self.load_plugin(&plugin_path).await {
                 Ok(loaded_id) => {
                     if let Err(e) = self.unload_plugin(id).await {
-                        tracing::warn!(plugin_id = %id, error = %e, "Failed to unload old version after upgrade");
+                        tracing::warn!(plugin_id = %id, error = %e, "升级后卸载旧版本失败");
                     }
-                    tracing::info!(old_id = %id, new_id = %loaded_id, "Plugin upgraded successfully");
+                    tracing::info!(old_id = %id, new_id = %loaded_id, "插件升级成功");
                     Ok(())
                 }
                 Err(e) => {
-                    tracing::error!(plugin_id = %id, error = %e, "Failed to load new version");
+                    tracing::error!(plugin_id = %id, error = %e, "加载新版本失败");
                     Err(e)
                 }
             }
@@ -556,14 +556,14 @@ impl PluginManager {
         for old_id in old_versions_to_remove {
             info!("Found old version of plugin {}, removing: {}", metadata.id, old_id);
             if let Err(e) = self.uninstall_plugin(&old_id).await {
-                tracing::warn!("Failed to uninstall old version {}: {}", old_id, e);
+                tracing::warn!("卸载旧版本 {} 失败: {}", old_id, e);
             }
         }
         
         if needs_unload {
             info!("Plugin {} is already loaded, unloading before re-installation", target_plugin_id);
             if let Err(e) = self.unload_plugin(&target_plugin_id).await {
-                tracing::warn!("Failed to unload plugin {} before installation: {}", target_plugin_id, e);
+                tracing::warn!("安装前卸载插件 {} 失败: {}", target_plugin_id, e);
                 // Continue anyway, installer handles backup/restore
             }
         }
@@ -573,7 +573,7 @@ impl PluginManager {
         // Automatically load the plugin after installation
         let plugin_path = self.config.plugin_dir.join(&plugin_id);
         if let Err(e) = self.load_plugin(&plugin_path).await {
-            tracing::error!("Failed to auto-load plugin after installation: {}", e);
+            tracing::error!("安装后自动加载插件失败: {}", e);
             // We return success for installation even if loading fails, 
             // but log the error. User can try to reload manually.
         }
@@ -614,7 +614,7 @@ impl PluginManager {
         
         // 4. Cleanup temp file
         if let Err(e) = tokio::fs::remove_file(&temp_path).await {
-            tracing::warn!("Failed to remove temp file {}: {}", temp_path.display(), e);
+            tracing::warn!("删除临时文件 {} 失败: {}", temp_path.display(), e);
         }
         
         result

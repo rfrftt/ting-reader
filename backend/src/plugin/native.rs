@@ -160,7 +160,7 @@ impl NativeLoader {
             path = ?path,
             max_memory = resource_limits.max_memory_bytes,
             max_cpu_time = ?resource_limits.max_cpu_time,
-            "Native library loaded successfully with resource limits"
+            "原生库加载成功（已应用资源限制）"
         );
         
         // Store the loaded library

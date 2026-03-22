@@ -113,7 +113,7 @@ pub async fn create_series(
         
         // Update metadata.json
         if let Err(e) = update_book_metadata_series(&state, &book.id).await {
-            tracing::warn!("Failed to update metadata.json for book {}: {}", book.id, e);
+            tracing::warn!("更新书籍 {} 的 metadata.json 失败: {}", book.id, e);
         }
     }
 
@@ -180,7 +180,7 @@ pub async fn update_series(
         // Update metadata.json for all affected books
         for book_id in affected_books {
             if let Err(e) = update_book_metadata_series(&state, &book_id).await {
-                tracing::warn!("Failed to update metadata.json for book {}: {}", book_id, e);
+                tracing::warn!("更新书籍 {} 的 metadata.json 失败: {}", book_id, e);
             }
         }
     } else {
@@ -189,7 +189,7 @@ pub async fn update_series(
             let books = state.series_repo.find_books_by_series(&id).await?;
             for (book, _) in books {
                 if let Err(e) = update_book_metadata_series(&state, &book.id).await {
-                    tracing::warn!("Failed to update metadata.json for book {}: {}", book.id, e);
+                    tracing::warn!("更新书籍 {} 的 metadata.json 失败: {}", book.id, e);
                 }
             }
         }
@@ -219,7 +219,7 @@ pub async fn delete_series(
     // Update metadata.json for affected books
     for (book, _) in books {
         if let Err(e) = update_book_metadata_series(&state, &book.id).await {
-            tracing::warn!("Failed to update metadata.json for book {}: {}", book.id, e);
+            tracing::warn!("更新书籍 {} 的 metadata.json 失败: {}", book.id, e);
         }
     }
 
@@ -261,7 +261,7 @@ async fn update_book_metadata_series(state: &AppState, book_id: &str) -> Result<
             
             // Write back
             if let Err(e) = crate::core::metadata_writer::write_metadata_json(path, &metadata) {
-                tracing::warn!("Failed to write metadata.json: {}", e);
+                tracing::warn!("写入 metadata.json 失败: {}", e);
             }
         }
     }

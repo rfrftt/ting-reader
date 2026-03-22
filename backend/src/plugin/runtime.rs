@@ -145,7 +145,7 @@ impl WasmRuntime {
                  Err(_) => return -2,
              };
              
-             tracing::info!("Plugin requesting URL: {}", url);
+             tracing::info!("插件请求 URL: {}", url);
              
              // 2. Perform Request (using reqwest blocking in host)
              // We create a new client for each request for simplicity
@@ -172,7 +172,7 @@ impl WasmRuntime {
              };
              
              if let Ok(body_str) = std::str::from_utf8(&body) {
-                 tracing::info!("Plugin received response (len={}): {:.200}...", body.len(), body_str);
+                 tracing::info!("插件收到响应 (长度={}): {:.200}...", body.len(), body_str);
              }
              
              // 3. Store response

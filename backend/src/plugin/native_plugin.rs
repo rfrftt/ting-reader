@@ -106,7 +106,7 @@ impl Plugin for NativePlugin {
     async fn initialize(&self, context: &PluginContext) -> Result<()> {
         tracing::info!(
             plugin_id = %self.plugin_id,
-            "Initializing native plugin"
+            "正在初始化原生插件"
         );
         
         // Call the plugin's initialize method if it exists
@@ -154,7 +154,7 @@ impl Plugin for NativePlugin {
         
         tracing::info!(
             plugin_id = %self.plugin_id,
-            "Native plugin initialized successfully"
+            "原生插件初始化成功"
         );
         
         Ok(())
@@ -213,7 +213,7 @@ impl Plugin for NativePlugin {
     
     async fn garbage_collect(&self) -> Result<()> {
         // Native plugins manage their own memory.
-        tracing::debug!(plugin_id = %self.plugin_id, "Garbage collection requested for native plugin");
+        tracing::debug!(plugin_id = %self.plugin_id, "请求本地插件进行垃圾回收");
         
         // Try to call the plugin's garbage_collect method if it exists
         // We use spawn_blocking because this is a native call

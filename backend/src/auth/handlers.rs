@@ -22,7 +22,7 @@ pub async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse> {
-    tracing::info!(username = %req.username, "User registration attempt");
+    tracing::debug!(username = %req.username, "尝试注册新用户");
 
     // Check if this is the first user (will be admin)
     let user_count = state.user_repo.count().await?;
@@ -47,10 +47,8 @@ pub async fn register(
     match state.user_repo.create(&user).await {
         Ok(_) => {
             tracing::info!(
-                user_id = %user_id,
-                username = %req.username,
-                role = %role,
-                "User registered successfully"
+                target: "audit::login",
+                "用户 '{}' 注册成功, 角色: {}", req.username, role
             );
             Ok((
                 StatusCode::CREATED,
@@ -58,7 +56,7 @@ pub async fn register(
             ))
         }
         Err(e) => {
-            tracing::warn!(username = %req.username, error = %e, "Registration failed");
+            tracing::warn!(target: "audit::login", "用户 '{}' 注册失败: {}", req.username, e);
             Err(TingError::InvalidRequest(
                 "Username already exists".to_string(),
             ))
@@ -71,7 +69,7 @@ pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
 ) -> Result<impl IntoResponse> {
-    tracing::info!(username = %req.username, "Login attempt");
+    tracing::debug!(username = %req.username, "尝试登录");
 
     // Find user by username
     let user = state
@@ -83,14 +81,14 @@ pub async fn login(
     // Verify password
     let is_valid = verify_password(&req.password, &user.password_hash)?;
     if !is_valid {
-        tracing::warn!(username = %req.username, "Invalid password");
+        tracing::warn!(target: "audit::login", "用户 '{}' 登录失败：密码错误", req.username);
         return Err(TingError::AuthenticationError("Invalid credentials".to_string()));
     }
 
     // Generate JWT token
     let token = generate_token(&user.id, &state.jwt_secret)?;
 
-    tracing::info!(user_id = %user.id, username = %user.username, "Login successful");
+    tracing::info!(target: "audit::login", "用户 '{}' 登录成功", user.username);
 
     Ok(Json(LoginResponse {
         user: UserInfo {
@@ -107,7 +105,7 @@ pub async fn get_me(
     State(state): State<AppState>,
     user: crate::auth::middleware::AuthUser,
 ) -> Result<Json<UserInfo>> {
-    tracing::info!(user_id = %user.id, "Getting current user info");
+    tracing::debug!(user_id = %user.id, username = %user.username, "获取当前用户信息");
 
     // Fetch full user info from database
     let db_user = state.user_repo.find_by_id(&user.id).await?
@@ -126,7 +124,7 @@ pub async fn update_me(
     user: crate::auth::middleware::AuthUser,
     Json(req): Json<UpdateUserRequest>,
 ) -> Result<Json<UserInfo>> {
-    tracing::info!(user_id = %user.id, "Updating current user info");
+    tracing::info!(user_id = %user.id, username = %user.username, "更新当前用户信息");
 
     // Fetch current user
     let mut db_user = state.user_repo.find_by_id(&user.id).await?
@@ -149,7 +147,7 @@ pub async fn update_me(
     // Save updated user
     state.user_repo.update(&db_user).await?;
 
-    tracing::info!(user_id = %user.id, "User info updated successfully");
+    tracing::info!(user_id = %user.id, "用户信息更新成功");
 
     Ok(Json(UserInfo {
         id: db_user.id,

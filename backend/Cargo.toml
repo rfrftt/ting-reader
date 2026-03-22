@@ -62,6 +62,7 @@ chrono = { version = "0.4", features = ["serde"] }
 semver = { version = "1.0", features = ["serde"] }
 regex = "1.10"
 url = "2.5"
+lazy_static = "1.4.0"
 
 # Configuration Validation
 jsonschema = "0.17"

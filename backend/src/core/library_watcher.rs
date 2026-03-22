@@ -112,7 +112,21 @@ impl LibraryWatcher {
                     // Only trigger on creations, modifications or deletions
                     match event.kind {
                         EventKind::Create(_) | EventKind::Modify(ModifyKind::Data(_)) | EventKind::Modify(ModifyKind::Name(_)) | EventKind::Remove(_) => {
-                            let _ = tx_clone.blocking_send(());
+                            // Filter out events caused by our own metadata generation
+                            let should_ignore = event.paths.iter().any(|p| {
+                                if let Some(file_name) = p.file_name().and_then(|n| n.to_str()) {
+                                    file_name == "metadata.json" || 
+                                    file_name.ends_with(".nfo") || 
+                                    file_name.starts_with("cover.") || 
+                                    file_name.starts_with("folder.")
+                                } else {
+                                    false
+                                }
+                            });
+
+                            if !should_ignore {
+                                let _ = tx_clone.blocking_send(());
+                            }
                         },
                         _ => {}
                     }
@@ -127,7 +141,7 @@ impl LibraryWatcher {
         self.watchers.write().await.insert(lib_id.clone(), watcher);
         self.debounce_senders.write().await.insert(lib_id, tx);
         
-        info!("Started watching library {} at {:?}", library_id, path_buf);
+        info!("开始监视库 {} at {:?}", library_id, path_buf);
 
         Ok(())
     }

@@ -12,15 +12,31 @@ use std::path::Path;
 use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
-    fmt::{self, format::FmtSpan},
+    fmt,
     layer::SubscriberExt,
     util::SubscriberInitExt,
     EnvFilter, Layer,
 };
+use serde::{Serialize, Deserialize};
+
+/// In-memory log entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEntry {
+    pub timestamp: String,
+    pub level: String,
+    pub module: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_type: Option<String>,
+}
 
 /// Logger instance that manages the logging system
 pub struct Logger {
-    _guard: Option<WorkerGuard>,
+    _guards: Vec<Option<WorkerGuard>>,
 }
 
 impl Logger {
@@ -28,14 +44,16 @@ impl Logger {
     ///
     /// This sets up the global tracing subscriber with the specified format,
     /// level, and output destination.
-    pub fn init(config: &LoggingConfig) -> Result<Self> {
+    pub fn init(config: &LoggingConfig, data_dir: &Path) -> Result<Self> {
         // Parse log level
         let level = parse_log_level(&config.level)?;
-        
+
         // Create env filter with the configured level
         let env_filter = EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| EnvFilter::new(level.as_str()));
         
+        let mut guards = Vec::new();
+
         // Create the appropriate writer and guard based on output configuration
         let (writer, guard) = match config.output.as_str() {
             "stdout" => {
@@ -66,6 +84,7 @@ impl Logger {
                 anyhow::bail!("Invalid output configuration: {}", config.output);
             }
         };
+        guards.push(guard);
         
         // Create the formatting layer based on format configuration
         let fmt_layer = match config.format.as_str() {
@@ -73,7 +92,6 @@ impl Logger {
                 fmt::layer()
                     .json()
                     .with_writer(writer)
-                    .with_span_events(FmtSpan::CLOSE)
                     .with_current_span(true)
                     .with_thread_ids(true)
                     .with_thread_names(true)
@@ -85,7 +103,6 @@ impl Logger {
             "text" => {
                 fmt::layer()
                     .with_writer(writer)
-                    .with_span_events(FmtSpan::CLOSE)
                     .with_thread_ids(true)
                     .with_thread_names(true)
                     .with_target(true)
@@ -98,10 +115,32 @@ impl Logger {
             }
         };
         
+        // Setup API JSON log layer
+        let api_log_dir = data_dir.join("logs");
+        std::fs::create_dir_all(&api_log_dir).context("Failed to create api log dir")?;
+        let api_log_file = api_log_dir.join("system.json");
+        let api_appender = create_rolling_appender(
+            &api_log_file,
+            5 * 1024 * 1024, // 5 MB
+            3, // 3 backups
+        )?;
+        let (api_writer, api_guard) = tracing_appender::non_blocking(api_appender);
+        guards.push(Some(api_guard));
+
+        let api_layer = fmt::layer()
+            .json()
+            .with_writer(api_writer)
+            .with_target(true)
+            .boxed();
+        
+        // Create env filter with the configured level for api layer
+        let api_env_filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new(level.as_str()));
+
         // Initialize the global subscriber
         tracing_subscriber::registry()
-            .with(env_filter)
-            .with(fmt_layer)
+            .with(fmt_layer.with_filter(env_filter))
+            .with(api_layer.with_filter(api_env_filter))
             .try_init()
             .context("Failed to initialize tracing subscriber")?;
         
@@ -109,10 +148,10 @@ impl Logger {
             level = %config.level,
             format = %config.format,
             output = %config.output,
-            "Logging system initialized"
+            "日志系统初始化完成"
         );
         
-        Ok(Logger { _guard: guard })
+        Ok(Logger { _guards: guards })
     }
 }
 

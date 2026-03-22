@@ -39,9 +39,9 @@ pub async fn trace_id_middleware(request: Request, next: Next) -> Response {
     );
     
     // Log the incoming request
-    tracing::info!(
+    tracing::debug!(
         parent: &span,
-        "Request started"
+        "请求开始"
     );
     
     // Store trace_id in request extensions so handlers can access it
@@ -53,9 +53,9 @@ pub async fn trace_id_middleware(request: Request, next: Next) -> Response {
         let response = next.run(request).await;
         
         // Log the response
-        tracing::info!(
+        tracing::debug!(
             status = %response.status(),
-            "Request completed"
+            "请求完成"
         );
         
         response

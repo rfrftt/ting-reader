@@ -186,8 +186,8 @@ impl LibraryScanner {
 
     /// Scan a library directory and discover audiobooks
     pub async fn scan_library(&self, library_id: &str, library_path: &str, task_id: Option<&str>) -> Result<ScanResult> {
-        info!(library_id = %library_id, path = %library_path, "Starting library scan");
-        self.update_progress(task_id, format!("Starting scan for library: {}", library_path)).await;
+        info!(target: "audit::scan", "开始扫描存储库: {} (ID: {})", library_path, library_id);
+        self.update_progress(task_id, format!("开始扫描存储库: {}", library_path)).await;
         self.check_cancellation(task_id).await?;
 
         // Fetch library to get configuration and type
@@ -236,15 +236,15 @@ impl LibraryScanner {
         }
 
         info!(
-            books_created = scan_result.books_created,
-            errors = scan_result.errors.len(),
-            "Library scan completed"
+            target: "audit::scan",
+            "存储库 '{}' 扫描完成：共 {} 本书，新增 {} 本，更新 {} 本，错误 {} 个",
+            library_path, scan_result.total_books, scan_result.books_created, scan_result.books_updated, scan_result.errors.len()
         );
-        self.update_progress(task_id, format!("Scan completed. Processed {} books.", scan_result.books_created)).await;
+        self.update_progress(task_id, format!("扫描完成。处理了 {} 本书。", scan_result.books_created + scan_result.books_updated)).await;
 
         // Trigger Merge Suggestions
         if let Some(merge_service) = &self.merge_service {
-            self.update_progress(task_id, "Processing auto-merges...".to_string()).await;
+            self.update_progress(task_id, "正在处理自动合并...".to_string()).await;
             if let Err(e) = merge_service.process_auto_merges().await {
                 warn!("Failed to process auto-merges: {}", e);
             }

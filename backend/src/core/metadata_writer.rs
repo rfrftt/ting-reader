@@ -87,6 +87,7 @@ pub fn write_metadata_json(dir: &Path, metadata: &AudiobookshelfMetadata) -> Res
     let path = dir.join("metadata.json");
     let file = std::fs::File::create(&path).map_err(|e| TingError::IoError(e))?;
     serde_json::to_writer_pretty(file, metadata).map_err(|e| TingError::SerializationError(e.to_string()))?;
+    tracing::info!(target: "audit::metadata", "成功写入元数据 (目录: {})", dir.display());
     Ok(())
 }
 

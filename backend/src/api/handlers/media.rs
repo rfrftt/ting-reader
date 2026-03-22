@@ -150,13 +150,13 @@ pub async fn get_cache_list(
                 total_size += cache_info.file_size;
             },
             Ok(None) => {
-                tracing::warn!("Found orphaned cache file for chapter: {}. Deleting...", cache_info.chapter_id);
+                tracing::warn!("发现章节 {} 的孤立缓存文件。正在删除...", cache_info.chapter_id);
                 if let Err(e) = state.cache_manager.delete_cache(&cache_info.chapter_id).await {
-                     tracing::error!("Failed to delete orphaned cache {}: {}", cache_info.chapter_id, e);
+                     tracing::error!("删除孤立缓存 {} 失败: {}", cache_info.chapter_id, e);
                 }
             },
             Err(e) => {
-                tracing::error!("Failed to lookup chapter for cache {}: {}", cache_info.chapter_id, e);
+                tracing::error!("查找缓存 {} 的章节失败: {}", cache_info.chapter_id, e);
             }
         }
     }
@@ -236,7 +236,7 @@ pub async fn proxy_cover(
     let normalized_path = params.path.replace('\\', "/");
     let image_path = std::path::Path::new(&normalized_path);
     
-    tracing::info!("Proxy cover request: original='{}', normalized='{}'", params.path, normalized_path);
+    tracing::info!("代理封面请求：原始='{}', 归一化='{}'", params.path, normalized_path);
     
     // Try to resolve path
     let final_path = if image_path.exists() {
@@ -310,6 +310,16 @@ pub async fn stream_chapter(
     let library = state.library_repo.find_by_id(&book.library_id).await?
         .ok_or_else(|| TingError::NotFound(format!("Library {} not found", book.library_id)))?;
 
+    if !is_head_request {
+        let username = user.as_ref().map(|u| u.username.clone()).unwrap_or_else(|| "匿名用户".to_string());
+        let book_title = book.title.clone().unwrap_or_default();
+        let chapter_title = chapter.title.clone().unwrap_or_default();
+        tracing::info!(
+            target: "audit::playback",
+            "用户 '{}' 开始播放书籍 '{}' 的章节 '{}'", username, book_title, chapter_title
+        );
+    }
+
     // Handle .strm files (URL Redirect)
     let ext = std::path::Path::new(&chapter.path)
         .extension()
@@ -334,7 +344,7 @@ pub async fn stream_chapter(
 
     // Handle Transcoding Request
     if let Some(format) = &params.transcode {
-        tracing::info!("Transcoding requested: {} -> {}", chapter.path, format);
+        tracing::info!("请求转码: {} -> {}", chapter.path, format);
 
         let content_type = match format.as_str() {
             "mp3" => "audio/mpeg",
@@ -369,7 +379,7 @@ pub async fn stream_chapter(
                         .collect();
                     if !cmd_vec.is_empty() {
                         plugin_command = Some(cmd_vec);
-                        tracing::info!("Using plugin-provided transcode command for {}", chapter.path);
+                        tracing::info!("对 {} 使用插件提供的转码命令", chapter.path);
                     }
                 }
             }
@@ -400,7 +410,7 @@ pub async fn stream_chapter(
                         
                     tokio::spawn(async move {
                         if let Err(e) = tokio::io::copy(&mut reader, &mut stdin).await {
-                             tracing::error!("Failed to pipe input to ffmpeg: {}", e);
+                             tracing::error!("无法将输入通过管道传输到 ffmpeg: {}", e);
                         }
                     });
                 }
@@ -427,7 +437,7 @@ pub async fn stream_chapter(
                  if !has_ffmpeg_utils {
                      // Skip FFmpeg transcoding for plugins that don't depend on it (e.g. xm-format)
                      // We will fall through to the standard streaming logic which uses the plugin to decrypt/decode.
-                     tracing::info!("Skipping FFmpeg transcoding for plugin '{}' (native support)", plugin.name);
+                     tracing::info!("跳过插件 '{}' 的 FFmpeg 转码（原生支持）", plugin.name);
                      goto_standard_stream = true;
                  }
             }
@@ -479,7 +489,7 @@ pub async fn stream_chapter(
                             
                         tokio::spawn(async move {
                             if let Err(e) = tokio::io::copy(&mut reader, &mut stdin).await {
-                                 tracing::error!("Failed to pipe input to ffmpeg: {}", e);
+                                 tracing::error!("无法将输入通过管道传输到 ffmpeg: {}", e);
                             }
                         });
                     }
@@ -539,7 +549,7 @@ pub async fn stream_chapter(
                                 let mut tasks = state.active_preload_tasks.lock().await;
                                 if let Some(handle) = tasks.remove(&user_id) {
                                     handle.abort();
-                                    tracing::debug!("Cancelled previous preload task for user {}", user_id);
+                                    tracing::debug!("已取消用户 {} 之前的预加载任务", user_id);
                                 }
                             }
                             
@@ -548,7 +558,7 @@ pub async fn stream_chapter(
                                 if auto_preload {
                                     let cache = state_clone.preload_cache.read().await;
                                     if cache.contains_key(&next_chapter_id) {
-                                        tracing::debug!("Skipping auto-preload for {} - already in cache", next_chapter_id);
+                                        tracing::debug!("跳过 {} 的自动预加载 - 已在缓存中", next_chapter_id);
                                         return;
                                     }
                                 }
@@ -571,7 +581,7 @@ pub async fn stream_chapter(
                                             {
                                                 let cache = state_clone.preload_cache.read().await;
                                                 if cache.contains_key(&next_chapter_id) {
-                                                    tracing::debug!("Skipping auto-preload for {} - already in cache (double check)", next_chapter_id);
+                                                    tracing::debug!("跳过 {} 的自动预加载 - 已在缓存中 (二次检查)", next_chapter_id);
                                                     return;
                                                 }
                                             }
@@ -593,13 +603,13 @@ pub async fn stream_chapter(
                                                         
                                                         if let Some(key) = oldest_key {
                                                             cache.remove(&key);
-                                                            tracing::debug!("Evicted oldest preloaded chapter from memory: {}", key);
+                                                            tracing::debug!("已从内存中驱逐最旧的预加载章节: {}", key);
                                                         }
                                                     }
                                                     
                                                     cache.insert(next_chapter_id.clone(), (bytes_data.clone(), std::time::Instant::now()));
                                                 }
-                                                tracing::info!("Auto-preloaded next chapter: {}", next_chapter_id);
+                                                tracing::info!("已自动预加载下一章: {}", next_chapter_id);
                                                 
                                                 // If auto_cache is also enabled, use the buffer to write to disk
                                                 if auto_cache && lib_clone.library_type.to_lowercase() != "local" {
@@ -609,22 +619,22 @@ pub async fn stream_chapter(
                                                         let temp_path = cache_path.with_extension("tmp");
                                                         if let Ok(_) = tokio::fs::write(&temp_path, &bytes_data).await {
                                                             if let Ok(_) = tokio::fs::rename(&temp_path, &cache_path).await {
-                                                                tracing::info!("Auto-cached next chapter (from buffer): {}", next_chapter_id);
+                                                                tracing::info!("已自动缓存下一章 (从缓冲区): {}", next_chapter_id);
                                                                 
                                                                 // Enforce limits
                                                                 let config = state_clone.config.read().await;
                                                                 let _ = state_clone.cache_manager.enforce_limits(50, config.storage.max_disk_usage).await;
                                                             } else {
-                                                                tracing::error!("Failed to rename temp cache file for chapter: {}", next_chapter_id);
+                                                                tracing::error!("重命名章节 {} 的临时缓存文件失败", next_chapter_id);
                                                                 let _ = tokio::fs::remove_file(&temp_path).await;
                                                             }
                                                         } else {
-                                                            tracing::error!("Failed to write temp cache file from buffer for chapter: {}", next_chapter_id);
+                                                            tracing::error!("从缓冲区为章节 {} 写入临时缓存文件失败", next_chapter_id);
                                                         }
                                                     }
                                                 }
                                             } else {
-                                                tracing::error!("Failed to read next chapter for preload: {}", next_chapter_id);
+                                                tracing::error!("读取下一章预加载失败: {}", next_chapter_id);
                                             }
                                         } else if auto_cache && lib_clone.library_type.to_lowercase() != "local" {
                                             // For auto_cache ONLY (disk), stream directly to file to save memory
@@ -639,30 +649,30 @@ pub async fn stream_chapter(
                                                              Ok(_) => {
                                                                  // Rename to final path
                                                                 if let Ok(_) = tokio::fs::rename(&temp_path, &cache_path).await {
-                                                                    tracing::info!("Auto-cached next chapter (streamed): {}", next_chapter_id);
+                                                                    tracing::info!("已自动缓存下一章 (流式): {}", next_chapter_id);
                                                                     
                                                                     // Enforce limits
                                                                     let config = state_clone.config.read().await;
                                                                     let _ = state_clone.cache_manager.enforce_limits(50, config.storage.max_disk_usage).await;
                                                                 } else {
-                                                                    tracing::error!("Failed to rename temp cache file for chapter: {}", next_chapter_id);
+                                                                    tracing::error!("重命名章节 {} 的临时缓存文件失败", next_chapter_id);
                                                                 }
                                                              },
                                                              Err(e) => {
-                                                                 tracing::error!("Failed to stream copy for auto-cache: {} - {}", next_chapter_id, e);
+                                                                 tracing::error!("自动缓存的流复制失败: {} - {}", next_chapter_id, e);
                                                                  let _ = tokio::fs::remove_file(&temp_path).await;
                                                              }
                                                          }
                                                      },
                                                      Err(e) => {
-                                                         tracing::error!("Failed to create temp cache file: {} - {}", next_chapter_id, e);
+                                                         tracing::error!("创建临时缓存文件失败: {} - {}", next_chapter_id, e);
                                                      }
                                                  }
                                             }
                                         }
                                     },
                                     Err(e) => {
-                                        tracing::error!("Failed to get reader for next chapter {}: {}", next_chapter_id, e);
+                                        tracing::error!("获取下一章 {} 的读取器失败: {}", next_chapter_id, e);
                                     }
                                 }
                             });
@@ -689,12 +699,12 @@ pub async fn stream_chapter(
                 // The current preload implementation stores raw bytes.
                 // TODO: Implement decrypted preload cache or handle decryption here.
                 // For now, skip preload cache for plugin-handled files to avoid sending encrypted data to client.
-                tracing::info!(chapter_id = %chapter_id, "Skipping preload cache for plugin-handled file");
+                tracing::info!(chapter_id = %chapter_id, "跳过插件处理文件的预加载缓存");
             } else {
                 // Update access time to implement LRU (keep frequently accessed chapters in memory)
                 *last_access = std::time::Instant::now();
                 
-                tracing::info!(chapter_id = %chapter_id, "Serving from preload cache (memory)");
+                tracing::debug!(target: "media", chapter_id = %chapter_id, "从预加载缓存 (内存) 提供服务");
                 let data = data.clone(); // Clone bytes (cheap reference count increment)
                 // Drop write lock early
                 drop(cache);
@@ -744,7 +754,7 @@ pub async fn stream_chapter(
     // 2. Check Disk Cache
         let cache_path = state.cache_manager.get_cache_path(&chapter_id);
         if cache_path.exists() {
-            tracing::info!(chapter_id = %chapter_id, "Serving from disk cache");
+            tracing::debug!(target: "media", chapter_id = %chapter_id, "从磁盘缓存提供服务");
             
             // Check if we need to use a format plugin even for cached files (source file is cached)
             let plugin_info = state.plugin_manager.find_plugin_for_format(std::path::Path::new(&chapter.path)).await;
@@ -752,7 +762,7 @@ pub async fn stream_chapter(
             if let Some(plugin) = plugin_info {
                 // If a plugin handles this format, we use the cached file as the source for the plugin logic
                 // instead of serving it directly.
-                tracing::info!(chapter_id = %chapter_id, plugin = %plugin.name, "Cached file requires format plugin processing");
+                tracing::info!(chapter_id = %chapter_id, plugin = %plugin.name, "缓存文件需要格式插件处理");
                 
                 // Fall through to the plugin handling logic below
                 // We need to make sure the logic below knows to use the cache_path as source
@@ -803,14 +813,14 @@ pub async fn stream_chapter(
         }
 
     // 3. Not cached. Fetch from source.
-    tracing::info!(chapter_id = %chapter_id, "Serving from source (stream)");
+    tracing::debug!(target: "media", chapter_id = %chapter_id, "从源 (流) 提供服务");
     
     // Determine if we need to use a format plugin
     // Instead of hardcoding extensions, we ask the plugin manager if any loaded plugin supports this extension
     let plugin_info = state.plugin_manager.find_plugin_for_format(std::path::Path::new(&chapter.path)).await;
     
     if let Some(plugin) = plugin_info {
-        tracing::info!(chapter_id = %chapter_id, plugin = %plugin.name, "Processing file with format plugin");
+        tracing::info!(chapter_id = %chapter_id, plugin = %plugin.name, "使用格式插件处理文件");
 
         let range_header = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
         let (stream, mime_type, content_length, start, end, logic_size) = create_decrypted_stream(
@@ -968,8 +978,8 @@ async fn create_decrypted_stream(
         FormatMethod::GetMetadataReadSize,
         serde_json::json!({"header_base64": probe_base64})
     ).await.map_err(|e| {
-        tracing::error!("Failed to get metadata read size: {}", e);
-        TingError::PluginExecutionError(format!("Failed to get metadata read size: {}", e))
+        tracing::error!("获取元数据读取大小失败: {}", e);
+        TingError::PluginExecutionError(format!("获取元数据读取大小失败: {}", e))
     })?;
     
     let header_size = size_json["size"].as_u64().unwrap_or(8192);
@@ -996,8 +1006,8 @@ async fn create_decrypted_stream(
         FormatMethod::GetDecryptionPlan, 
         serde_json::json!({"header_base64": header_base64})
     ).await.map_err(|e| {
-        tracing::error!("Failed to get decryption plan: {}", e);
-        TingError::PluginExecutionError(format!("Failed to get decryption plan: {}", e))
+        tracing::error!("获取解密计划失败: {}", e);
+        TingError::PluginExecutionError(format!("获取解密计划失败: {}", e))
     })?;
     
     let plan: DecryptionPlan = serde_json::from_value(plan_json)

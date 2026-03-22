@@ -251,7 +251,7 @@ pub async fn update_user_settings(
     } else {
         // If non-admin tries to update these, we silently ignore them or log a warning
         if req.widget_css.is_some() {
-            tracing::warn!(user_id = %user.id, "Non-admin user attempted to update restricted settings");
+            tracing::warn!(user_id = %user.id, "非管理员用户尝试更新受限设置");
         }
     }
 

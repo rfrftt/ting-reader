@@ -154,19 +154,19 @@ impl BookService {
                 // Recalculate theme color if not explicitly provided in request
                 if request.theme_color.is_none() {
                     use crate::core::color::calculate_theme_color;
-                    tracing::info!("Recalculating theme color for book {} from cover {}", book.id, cover_url);
+                    tracing::info!("从封面 {} 重新计算书籍 {} 的主题颜色", book.id, cover_url);
                     
                     match calculate_theme_color(&cover_url).await {
                         Ok(Some(color)) => {
-                            tracing::info!("Updated theme color for book {}: {}", book.id, color);
+                            tracing::info!("更新了书籍 {} 的主题颜色: {}", book.id, color);
                             book.theme_color = Some(color);
                         }
                         Ok(None) => {
-                            tracing::warn!("Could not extract theme color from cover {}", cover_url);
+                            tracing::warn!("无法从封面 {} 提取主题颜色", cover_url);
                             book.theme_color = None;
                         }
                         Err(e) => {
-                            tracing::error!("Failed to calculate theme color: {}", e);
+                            tracing::error!("计算主题颜色失败: {}", e);
                             book.theme_color = None;
                         }
                     }
@@ -418,7 +418,7 @@ impl ScraperService {
                             format!("Plugin {} failed after {} attempts: {}", source_id, attempts, e)
                         ));
                     }
-                    tracing::warn!("Plugin {} failed (attempt {}/{}): {}. Retrying in {:?}...", 
+                    tracing::warn!("插件 {} 失败 (尝试 {}/{}): {}。将在 {:?} 后重试...", 
                         source_id, attempts, max_attempts, e, delay);
                     tokio::time::sleep(delay).await;
                     delay *= 2; // Exponential backoff
@@ -467,11 +467,11 @@ impl ScraperService {
         
         // Check cache first
         if let Some(cached) = self.get_cached_search(&cache_key) {
-            tracing::debug!("Cache hit for search query: {}", clean_query);
+            tracing::debug!("命中搜索查询的缓存: {}", clean_query);
             return Ok(cached);
         }
         
-        tracing::debug!("Cache miss for search query: {}, calling plugin {}", clean_query, source_id);
+        tracing::debug!("未命中搜索查询的缓存: {}, 调用插件 {}", clean_query, source_id);
         
         // Call scraper plugin with error handling and fallback
         let params = json!({
@@ -487,7 +487,7 @@ impl ScraperService {
         {
             Ok(result) => result,
             Err(e) => {
-                tracing::error!("Scraper plugin {} failed: {}", source_id, e);
+                tracing::error!("刮削器插件 {} 失败: {}", source_id, e);
                 
                 // If a specific source was requested, don't try fallback
                 if source.is_some() {
@@ -497,7 +497,7 @@ impl ScraperService {
                 }
                 
                 // Try fallback to another scraper
-                tracing::info!("Attempting fallback to another scraper");
+                tracing::info!("尝试回退到另一个刮削器");
                 let fallback_source = self.try_fallback_scraper(&source_id).await?;
                 
                 self.plugin_manager
@@ -548,14 +548,14 @@ impl ScraperService {
         
         // Check cache first
         if let Some(cached) = self.get_cached_detail(&cache_key) {
-            tracing::debug!("Cache hit for book detail: {}:{}", source, book_id);
+            tracing::debug!("命中书籍详情的缓存: {}:{}", source, book_id);
             return Ok(cached);
         }
 
         // Resolve source ID (in case it's just a name)
         let source_id = self.select_scraper(Some(source)).await?;
         
-        tracing::debug!("Cache miss for book detail: {}:{}, calling plugin {}", source, book_id, source_id);
+        tracing::debug!("未命中书籍详情的缓存: {}:{}, 调用插件 {}", source, book_id, source_id);
         
         // Call scraper plugin
         let params = json!({
@@ -568,7 +568,7 @@ impl ScraperService {
             params
         ).await
         .map_err(|e| {
-            tracing::error!("Failed to get book detail from {}: {}", source_id, e);
+            tracing::error!("从 {} 获取书籍详情失败: {}", source_id, e);
             TingError::PluginExecutionError(
                 format!("Failed to get book detail: {}", e)
             )
@@ -596,7 +596,7 @@ impl ScraperService {
         
         match fallback {
             Some(source) => {
-                tracing::info!("Using fallback scraper: {}", source.id);
+                tracing::info!("使用备用刮削器: {}", source.id);
                 Ok(source.id)
             }
             None => Err(TingError::PluginNotFound(
@@ -667,7 +667,7 @@ impl ScraperService {
         if let Ok(mut cache) = self.detail_cache.write() {
             cache.clear();
         }
-        tracing::info!("Scraper service cache cleared");
+        tracing::info!("刮削器服务缓存已清除");
     }
     
     /// Get cache statistics
@@ -747,10 +747,10 @@ impl ScraperService {
                         
                         source_results.insert(source_id, detail);
                     } else {
-                        tracing::debug!("No search results from {} for {}", source_id, query);
+                        tracing::debug!("没有来自 {} 的关于 {} 的搜索结果", source_id, query);
                     }
                 },
-                Err(e) => tracing::warn!("Search failed on {}: {}", source_id, e),
+                Err(e) => tracing::warn!("在 {} 上的搜索失败: {}", source_id, e),
             }
         }
         

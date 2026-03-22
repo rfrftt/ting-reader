@@ -211,7 +211,7 @@ pub async fn scraper_search(
     State(state): State<AppState>,
     Json(request): Json<ScraperSearchRequest>,
 ) -> Result<impl IntoResponse> {
-    tracing::info!("Received scraper search request: {:?}", request);
+    tracing::info!("收到刮削器搜索请求: {:?}", request);
 
     let page = request.page.unwrap_or(1);
     let page_size = request.page_size.unwrap_or(20);

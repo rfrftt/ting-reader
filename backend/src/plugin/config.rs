@@ -157,7 +157,7 @@ impl PluginConfigManager {
         
         tracing::info!(
             plugin_id = %plugin_id,
-            "Plugin configuration initialized"
+            "插件配置 initialized"
         );
         
         Ok(())
@@ -267,7 +267,7 @@ impl PluginConfigManager {
         
         tracing::info!(
             plugin_id = %plugin_id,
-            "Plugin configuration updated"
+            "插件配置 updated"
         );
         
         Ok(())
@@ -305,7 +305,7 @@ impl PluginConfigManager {
         
         tracing::info!(
             plugin_id = %plugin_id,
-            "Plugin configuration deleted"
+            "插件配置 deleted"
         );
         
         Ok(())
@@ -374,7 +374,7 @@ impl PluginConfigManager {
         
         tracing::info!(
             plugin_id = %plugin_id,
-            "Plugin configuration exported successfully"
+            "插件配置 exported successfully"
         );
         
         Ok(export)
@@ -431,7 +431,7 @@ impl PluginConfigManager {
         
         tracing::info!(
             plugin_id = %plugin_id,
-            "Plugin configuration imported successfully"
+            "插件配置 imported successfully"
         );
         
         Ok(())
@@ -446,7 +446,7 @@ impl PluginConfigManager {
     /// # Returns
     /// JSON object mapping plugin IDs to their configurations
     pub fn export_all_configs(&self) -> Result<Value> {
-        tracing::info!("Exporting all plugin configurations");
+        tracing::info!("正在导出所有插件配置");
         
         let configs = self.configs.read().map_err(|e| {
             TingError::ConfigError(format!("Failed to acquire config lock: {}", e))
@@ -492,7 +492,7 @@ impl PluginConfigManager {
     /// # Returns
     /// Ok if successful
     pub fn import_all_configs(&self, import_data: Value) -> Result<()> {
-        tracing::info!("Importing all plugin configurations");
+        tracing::info!("正在导入所有插件配置");
         
         let imports = import_data.as_object().ok_or_else(|| {
             TingError::ConfigError("Import data must be a JSON object".to_string())
@@ -507,7 +507,7 @@ impl PluginConfigManager {
                     imported_count += 1;
                     tracing::debug!(
                         plugin_id = %plugin_id,
-                        "Plugin configuration imported"
+                        "插件配置 imported"
                     );
                 }
                 Err(e) => {
@@ -523,7 +523,7 @@ impl PluginConfigManager {
         tracing::info!(
             imported = imported_count,
             total = imports.len(),
-            "Plugin configurations import completed"
+            "插件配置s import completed"
         );
         
         Ok(())

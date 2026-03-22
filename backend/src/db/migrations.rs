@@ -302,7 +302,7 @@ CREATE INDEX IF NOT EXISTS idx_progress_updated_at ON progress(user_id, updated_
 /// Before applying migrations, it creates a backup of the database.
 /// If a migration fails, it automatically rolls back to the backup.
 pub fn run_migrations(conn: &mut Connection) -> Result<()> {
-    info!("Running database migrations");
+    info!("正在运行数据库迁移");
     
     // Create migration tracking table
     conn.execute_batch(MIGRATION_TABLE)
@@ -317,7 +317,7 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
         )
         .map_err(|e| TingError::DatabaseError(e))?;
     
-    info!("Current database schema version: {}", current_version);
+    info!("当前数据库模式版本: {}", current_version);
     
     // Apply migrations
     if current_version < 1 {
@@ -401,7 +401,7 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
         apply_migration(conn, 11, MIGRATION_V11)?;
     }
 
-    info!("Database migrations completed successfully");
+    info!("数据库迁移成功完成");
     Ok(())
 }
 
@@ -410,7 +410,7 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
 /// This function creates a backup before applying migrations.
 /// If any migration fails, it restores from the backup.
 pub fn run_migrations_with_backup(db_path: &Path) -> Result<()> {
-    info!("Running database migrations with automatic backup");
+    info!("正在运行数据库迁移 with automatic backup");
     
     // Create backup before migration
     let backup_path = create_migration_backup(db_path)?;

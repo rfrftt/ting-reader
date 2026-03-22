@@ -181,7 +181,7 @@ pub async fn update_book(
                      }
                  },
                  Err(e) => {
-                     tracing::warn!("Failed to calculate theme color: {}", e);
+                     tracing::warn!("计算主题颜色失败: {}", e);
                  }
              }
         } else {
@@ -295,7 +295,7 @@ pub async fn update_book(
             };
             
             if let Err(e) = state.nfo_manager.write_book_nfo_to_dir(&target_dir, &metadata) {
-                tracing::warn!("Failed to write NFO for book {}: {}", updated_book.title.as_deref().unwrap_or("?"), e);
+                tracing::warn!("为书籍 {} 写入 NFO 失败: {}", updated_book.title.as_deref().unwrap_or("?"), e);
             }
         }
 
@@ -373,7 +373,7 @@ pub async fn update_book(
             // If request had extended fields (not supported in UpdateBookRequest yet), we would update them here.
             
             if let Err(e) = crate::core::metadata_writer::write_metadata_json(&target_dir, &metadata_json) {
-                tracing::warn!("Failed to write metadata.json for book {}: {}", updated_book.title.as_deref().unwrap_or("?"), e);
+                tracing::error!(target: "audit::metadata", "为书籍 {} 写入 metadata.json 失败: {}", updated_book.title.as_deref().unwrap_or("?"), e);
             }
         }
     }
@@ -509,7 +509,7 @@ pub async fn scrape_book(
             metadata.touch(); // Update timestamp
             
             if let Err(e) = state.nfo_manager.write_book_nfo_to_dir(&target_dir, &metadata) {
-                tracing::warn!("Failed to write NFO for book {}: {}", updated_book.title.as_deref().unwrap_or("?"), e);
+                tracing::warn!("为书籍 {} 写入 NFO 失败: {}", updated_book.title.as_deref().unwrap_or("?"), e);
             }
         }
 
@@ -530,7 +530,7 @@ pub async fn scrape_book(
             // If request had extended fields (not supported in UpdateBookRequest yet), we would update them here.
             
             if let Err(e) = crate::core::metadata_writer::write_metadata_json(&target_dir, &metadata_json) {
-                tracing::warn!("Failed to write metadata.json for book {}: {}", updated_book.title.as_deref().unwrap_or("?"), e);
+                tracing::error!(target: "audit::metadata", "为书籍 {} 写入 metadata.json 失败: {}", updated_book.title.as_deref().unwrap_or("?"), e);
             }
         }
     }
@@ -553,9 +553,9 @@ pub async fn delete_book(
             let path = std::path::Path::new(&path_str);
             if path.exists() {
                  if let Err(e) = std::fs::remove_file(path) {
-                     tracing::warn!("Failed to delete cover cache {}: {}", cover_url, e);
+                     tracing::warn!("删除封面缓存 {} 失败: {}", cover_url, e);
                  } else {
-                     tracing::info!("Deleted orphan cover cache: {}", cover_url);
+                     tracing::info!("已删除孤立的封面缓存: {}", cover_url);
                  }
             }
         }
@@ -716,7 +716,7 @@ pub async fn update_chapter(
             metadata_json.series = series_titles;
             
             if let Err(e) = crate::core::metadata_writer::write_metadata_json(&target_dir, &metadata_json) {
-                tracing::warn!("Failed to write metadata.json for chapter update {}: {}", updated_chapter.title.as_deref().unwrap_or("?"), e);
+                tracing::error!(target: "audit::metadata", "为章节更新 {} 写入 metadata.json 失败: {}", updated_chapter.title.as_deref().unwrap_or("?"), e);
             }
         }
     }
@@ -932,7 +932,7 @@ pub async fn batch_update_chapters(
             metadata_json.series = series_titles;
             
             if let Err(e) = crate::core::metadata_writer::write_metadata_json(&target_dir, &metadata_json) {
-                tracing::warn!("Failed to write metadata.json for batch update {}: {}", book.title.as_deref().unwrap_or("?"), e);
+                tracing::error!(target: "audit::metadata", "为批量更新 {} 写入 metadata.json 失败: {}", book.title.as_deref().unwrap_or("?"), e);
             }
         }
     }
@@ -1203,7 +1203,7 @@ pub async fn apply_scrape_result(
             // Recalculate theme color for new cover
             match crate::core::color::calculate_theme_color(url).await {
                 Ok(Some(color)) => {
-                    tracing::info!("Updated theme color for book {}: {}", book.id, color);
+                    tracing::info!("更新了书籍 {} 的主题颜色: {}", book.id, color);
                     book.theme_color = Some(color);
                 },
                 Ok(None) => {
@@ -1227,7 +1227,7 @@ pub async fn apply_scrape_result(
                      }
                 },
                 Err(e) => {
-                    tracing::warn!("Failed to calculate theme color: {}", e);
+                    tracing::warn!("计算主题颜色失败: {}", e);
                 }
             }
         }
@@ -1278,7 +1278,7 @@ pub async fn apply_scrape_result(
             metadata.touch();
             
             if let Err(e) = state.nfo_manager.write_book_nfo_to_dir(&target_dir, &metadata) {
-                tracing::warn!("Failed to write NFO for book {}: {}", book.title.as_deref().unwrap_or("?"), e);
+                tracing::warn!("为书籍 {} 写入 NFO 失败: {}", book.title.as_deref().unwrap_or("?"), e);
             }
         }
 
@@ -1347,7 +1347,7 @@ pub async fn apply_scrape_result(
             if detail.abridged { metadata_json.abridged = true; }
             
             if let Err(e) = crate::core::metadata_writer::write_metadata_json(&target_dir, &metadata_json) {
-                tracing::warn!("Failed to write metadata.json for book {}: {}", book.title.as_deref().unwrap_or("?"), e);
+                tracing::error!(target: "audit::metadata", "为书籍 {} 写入 metadata.json 失败: {}", book.title.as_deref().unwrap_or("?"), e);
             }
         }
     }

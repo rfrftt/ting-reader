@@ -73,7 +73,7 @@ impl LibraryScanner {
         let mut scan_result = ScanResult::default();
         scan_result.start_time = Some(std::time::Instant::now());
         
-        self.update_progress(task_id, "Scanning local directories...".to_string()).await;
+        self.update_progress(task_id, "正在扫描本地目录...".to_string()).await;
 
         // Get all supported extensions dynamically
         let supported_extensions = self.get_supported_extensions().await;
@@ -95,7 +95,7 @@ impl LibraryScanner {
             }
         }
 
-        self.update_progress(task_id, format!("Found {} directories with audio files", dir_groups.len())).await;
+        self.update_progress(task_id, format!("找到 {} 个包含音频文件的目录", dir_groups.len())).await;
 
         // 2. Process each directory group as a book
         let total_groups = dir_groups.len();
@@ -129,7 +129,7 @@ impl LibraryScanner {
             processed_count += 1;
             let dir_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("Unknown");
             
-            self.update_progress(task_id, format!("Processing ({}/{}): {}", processed_count, total_groups, dir_name)).await;
+            self.update_progress(task_id, format!("处理中 ({}/{}): {}", processed_count, total_groups, dir_name)).await;
 
             // Sort files by filename using natural sort order (e.g. 1, 2, 10 instead of 1, 10, 2)
             files.sort_by(|a, b| natord::compare(a.to_string_lossy().as_ref(), b.to_string_lossy().as_ref()));
@@ -568,13 +568,18 @@ impl LibraryScanner {
             
             let metadata_json = crate::core::metadata_writer::AudiobookshelfMetadata::new(&book, abs_chapters, extended_meta, series_titles);
             if let Err(e) = crate::core::metadata_writer::write_metadata_json(dir, &metadata_json) {
-                warn!("Failed to write metadata.json: {}", e);
+                warn!(target: "audit::metadata", "写入 metadata.json 失败 (目录: {:?}): {}", dir, e);
             } else {
-                info!("Successfully wrote metadata.json to: {:?}", dir);
+                debug!("Successfully wrote metadata.json to: {:?}", dir);
             }
         }
 
-        Ok((book_id, if chapters_changed { ScanStatus::Updated } else { status }))
+        let final_status = match status {
+            ScanStatus::Created => ScanStatus::Created,
+            _ => if chapters_changed { ScanStatus::Updated } else { status }
+        };
+
+        Ok((book_id, final_status))
     }
 
     async fn extract_final_metadata(
@@ -695,10 +700,6 @@ impl LibraryScanner {
         // 3. Fallback Cover Extraction (if still no cover, extract from ID3 and save)
         // This runs only if cover is still missing, regardless of priority, 
         // because if "audio_metadata" was high priority, it would have set cover_url from plugin/id3.
-        // But wait, `extract_from_audio` doesn't save to disk automatically in new logic?
-        // I should ensure `extract_from_audio` sets `cover_url` if found in tag.
-        // And if `local_metadata` is high priority but `cover.jpg` is missing, we might want to extract it?
-        // Yes.
         if scraper_config.extract_audio_cover && final_meta.cover_url.is_none() && !files.is_empty() {
              let first_file = &files[0];
              if let Some(ext) = first_file.extension() {
@@ -709,6 +710,21 @@ impl LibraryScanner {
                      }
                  }
              }
+        }
+
+        // 4. Validate local cover paths to ensure they exist
+        if let Some(ref url) = final_meta.cover_url {
+            if !url.starts_with("http") && !url.starts_with("//") {
+                let p = Path::new(url);
+                if !p.exists() {
+                    let rel_p = dir.join(url);
+                    if !rel_p.exists() {
+                        final_meta.cover_url = None;
+                    } else {
+                        final_meta.cover_url = Some(rel_p.to_string_lossy().replace('\\', "/"));
+                    }
+                }
+            }
         }
 
         (final_meta, final_source)
@@ -809,7 +825,7 @@ impl LibraryScanner {
                      .unwrap_or(false);
                  if !supports_ext { continue; }
 
-                 let params = serde_json::json!({ "file_path": file_path.to_string_lossy() });
+                 let params = serde_json::json!({ "file_path": file_path.to_string_lossy(), "extract_cover": extract_cover });
                  if let Ok(result) = self.plugin_manager.call_format(&plugin.id, FormatMethod::ExtractMetadata, params).await {
                      if let Some(t) = result.get("album").and_then(|v| v.as_str()) {
                          if !t.trim().is_empty() {
@@ -973,7 +989,7 @@ impl LibraryScanner {
             if index % 5 == 0 {
                 // Check cancellation and log progress
                 self.check_cancellation(task_id).await?;
-                self.update_progress(task_id, format!("Processing chapter {}/{}", index + 1, total_files)).await;
+                self.update_progress(task_id, format!("处理章节 {}/{}", index + 1, total_files)).await;
             }
 
             // Incremental Scan Logic

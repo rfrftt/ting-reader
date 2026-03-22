@@ -120,6 +120,14 @@ pub async fn create_library(
 
     state.library_repo.create(&library).await?;
 
+    tracing::info!(
+        target: "audit::library",
+        "管理员 '{}' 创建了存储库 '{}' (路径/URL: {})",
+        user.username,
+        library.name,
+        library.url
+    );
+
     let library_path = if library.library_type == "local" {
         let config = state.config.read().await;
         let storage_root = config.storage.local_storage_root.clone();
@@ -146,7 +154,7 @@ pub async fn create_library(
     );
 
     if let Err(e) = state.task_queue.submit(task).await {
-        tracing::error!(library_id = %library.id, error = %e, "Failed to queue initial scan task");
+        tracing::error!(library_id = %library.id, error = %e, "队列初始扫描任务失败");
     }
     
     // Start watching the library if it's local
@@ -158,7 +166,7 @@ pub async fn create_library(
             
         if !scraper_config.disable_watcher {
             if let Err(e) = state.library_watcher.watch_library(&library.id, &library_path).await {
-                tracing::warn!("Failed to start watching new library {}: {}", library.id, e);
+                tracing::warn!("开始监视新库 {} 失败: {}", library.id, e);
             }
         }
     }
@@ -252,7 +260,7 @@ pub async fn update_library(
             let library_path = full_path.to_string_lossy().to_string();
             
             if let Err(e) = state.library_watcher.watch_library(&library.id, &library_path).await {
-                tracing::warn!("Failed to update watcher for library {}: {}", library.id, e);
+                tracing::warn!("更新库 {} 的监视器失败: {}", library.id, e);
             }
         }
     }
@@ -270,12 +278,12 @@ pub async fn delete_library(
         return Err(TingError::PermissionDenied("Admin access required".to_string()));
     }
 
-    state.library_repo.find_by_id(&library_id).await?
+    let library = state.library_repo.find_by_id(&library_id).await?
         .ok_or_else(|| TingError::NotFound(format!("Library {} not found", library_id)))?;
 
     // Cancel any running tasks for this library first
     if let Err(e) = state.task_queue.cancel_library_tasks(&library_id).await {
-        tracing::error!(library_id = %library_id, error = %e, "Failed to cancel library tasks");
+        tracing::error!(library_id = %library_id, error = %e, "取消库任务失败");
         // Continue with deletion even if cancellation fails
     }
 
@@ -291,7 +299,7 @@ pub async fn delete_library(
     // Cleanup any orphan books that might have been created during the deletion process
     // (e.g. by a race condition with a running scanner task)
     if let Err(e) = state.book_repo.cleanup_orphans().await {
-        tracing::error!(library_id = %library_id, error = %e, "Failed to cleanup orphan books");
+        tracing::error!(library_id = %library_id, error = %e, "清理孤立书籍失败");
     }
 
     // Cleanup cached covers for WebDAV libraries
@@ -304,9 +312,9 @@ pub async fn delete_library(
         if path_str.contains("/temp/covers/") || path_str.contains("/storage/cache/covers/") {
             if path.exists() {
                  if let Err(e) = std::fs::remove_file(path) {
-                     tracing::warn!("Failed to delete cover cache {}: {}", cover_path, e);
+                     tracing::warn!("删除封面缓存 {} 失败: {}", cover_path, e);
                  } else {
-                     tracing::info!("Deleted orphan cover cache: {}", cover_path);
+                     tracing::info!("已删除孤立的封面缓存: {}", cover_path);
                  }
             }
    }
@@ -314,6 +322,14 @@ pub async fn delete_library(
 
     state.library_watcher.stop_watching(&library_id).await;
     
+    tracing::info!(
+        target: "audit::library",
+        "管理员 '{}' 删除了存储库 '{}' (ID: {})",
+        user.username,
+        library.name,
+        library.id
+    );
+
     Ok(Json(serde_json::json!({
         "success": true,
         "message": "Library deleted successfully"

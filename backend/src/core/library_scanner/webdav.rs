@@ -1,4 +1,4 @@
-use super::{LibraryScanner, ScanResult, MetadataSource};
+use super::{LibraryScanner, ScanResult, ScanStatus, MetadataSource};
 use crate::core::error::{Result, TingError};
 use crate::core::nfo_manager::BookMetadata;
 use crate::db::repository::Repository;
@@ -29,7 +29,7 @@ impl LibraryScanner {
 
         let mut scan_result = ScanResult::default();
         scan_result.start_time = Some(std::time::Instant::now());
-        self.update_progress(task_id, "Scanning WebDAV directories...".to_string()).await;
+        self.update_progress(task_id, "正在扫描 WebDAV 目录...".to_string()).await;
 
         // 1. List files recursively
         let files = self.list_webdav_files(library, task_id).await?;
@@ -54,7 +54,7 @@ impl LibraryScanner {
             }
         }
 
-        self.update_progress(task_id, format!("Found {} directories with audio files", dir_groups.len())).await;
+        self.update_progress(task_id, format!("找到 {} 个包含音频文件的目录", dir_groups.len())).await;
 
         let total_groups = dir_groups.len();
         let mut processed_count = 0;
@@ -92,7 +92,7 @@ impl LibraryScanner {
             let decoded_dir_url = self.decode_url_path(&dir_url);
             let dir_name = decoded_dir_url.trim_end_matches('/').split('/').last().unwrap_or("Unknown");
             
-            self.update_progress(task_id, format!("Processing ({}/{}): {}", processed_count, total_groups, dir_name)).await;
+            self.update_progress(task_id, format!("处理中 ({}/{}): {}", processed_count, total_groups, dir_name)).await;
 
             // Sort file entries naturally by URL
             file_entries.sort_by(|a, b| natord::compare(&a.0, &b.0));
@@ -141,11 +141,15 @@ impl LibraryScanner {
             }
 
             match self.process_webdav_book(library, &dir_url, &file_urls, &metadata_files, task_id, scraper_config, existing_info).await {
-                Ok(book_id) => {
+                Ok((book_id, status)) => {
                     scan_result.total_books += 1;
-                    scan_result.books_created += 1; // Note: process_webdav_book doesn't return status yet, assuming created/updated
+                    match status {
+                        ScanStatus::Created => scan_result.books_created += 1,
+                        ScanStatus::Updated => scan_result.books_updated += 1,
+                        ScanStatus::Skipped => scan_result.books_skipped += 1,
+                    }
                     found_book_ids.insert(book_id.clone());
-                    debug!(book_id = %book_id, url = %dir_url, "Processed WebDAV book directory");
+                    debug!(book_id = %book_id, url = %dir_url, status = ?status, "Processed WebDAV book directory");
                 }
                 Err(e) => {
                     scan_result.failed_count += 1;
@@ -433,7 +437,7 @@ impl LibraryScanner {
         _task_id: Option<&str>,
         scraper_config: &crate::db::models::ScraperConfig,
         existing_info: Option<(String, i32, Option<String>)>,
-    ) -> Result<String> {
+    ) -> Result<(String, ScanStatus)> {
         // Derive title from directory name
         // Decode URL to handle percent-encoded characters (e.g. Chinese)
         let decoded_url = self.decode_url_path(dir_url);
@@ -687,14 +691,21 @@ impl LibraryScanner {
             }
         }
 
+        let mut status = ScanStatus::Created;
         // Check if existing book (by ID check above)
         if existing_info.is_some() {
              if !manual_corrected {
                  self.book_repo.update(&book).await?;
+                 status = ScanStatus::Updated;
+             } else {
+                 status = ScanStatus::Skipped;
              }
         } else if let Ok(Some(_)) = self.book_repo.find_by_id(&book_id).await {
              if !manual_corrected {
                  self.book_repo.update(&book).await?;
+                 status = ScanStatus::Updated;
+             } else {
+                 status = ScanStatus::Skipped;
              }
         } else {
              self.book_repo.create(&book).await?;
@@ -715,6 +726,7 @@ impl LibraryScanner {
         
         // Track processed chapter IDs to find deleted ones
         let mut processed_chapter_ids = HashSet::new();
+        let mut chapters_changed = false;
 
         for file_url in file_urls.iter() {
             // Decode filename for title
@@ -798,9 +810,11 @@ impl LibraryScanner {
                 existing.book_id = book_id.clone(); // Ensure it belongs to this book
                 self.chapter_repo.update(&existing).await?;
                 processed_chapter_ids.insert(existing.id.clone());
+                chapters_changed = true;
             } else {
                 self.chapter_repo.create(&chapter).await?;
                 processed_chapter_ids.insert(chapter.id.clone());
+                chapters_changed = true;
             }
         }
         
@@ -811,6 +825,8 @@ impl LibraryScanner {
                     info!("Removing missing chapter from DB: {:?}", ch.path);
                     if let Err(e) = self.chapter_repo.delete(&ch.id).await {
                         warn!("Failed to delete missing chapter {}: {}", ch.id, e);
+                    } else {
+                        chapters_changed = true;
                     }
                 }
             }
@@ -996,7 +1012,12 @@ impl LibraryScanner {
             }
         }
         
-        Ok(book_id)
+        let final_status = match status {
+            ScanStatus::Created => ScanStatus::Created,
+            _ => if chapters_changed { ScanStatus::Updated } else { status }
+        };
+        
+        Ok((book_id, final_status))
     }
 
     async fn extract_webdav_metadata(

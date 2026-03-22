@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
     };
 
     // Initialize logging system based on configuration
-    let _logger = match core::Logger::init(&config.logging) {
+    let _logger = match core::Logger::init(&config.logging, &config.storage.data_dir) {
         Ok(logger) => logger,
         Err(e) => {
             eprintln!("Failed to initialize logging: {}", e);
@@ -28,25 +28,25 @@ async fn main() -> Result<()> {
         }
     };
 
-    info!("Configuration loaded successfully");
-    info!("Starting Ting Reader Backend v{}", env!("CARGO_PKG_VERSION"));
+    info!("配置加载成功");
+    info!("正在启动 Ting Reader 后端 v{}", env!("CARGO_PKG_VERSION"));
     info!(
         host = %config.server.host,
         port = config.server.port,
-        "Server configuration"
+        "服务器配置"
     );
     info!(
         path = ?config.database.path,
-        "Database configuration"
+        "数据库配置"
     );
     info!(
         plugin_dir = ?config.plugins.plugin_dir,
         enable_hot_reload = config.plugins.enable_hot_reload,
-        "Plugin configuration"
+        "插件配置"
     );
 
     // Ensure required directories exist
-    info!("Ensuring required directories exist...");
+    info!("正在确保必需的目录存在...");
     let required_dirs = vec![
         &config.storage.data_dir,
         &config.storage.temp_dir,
@@ -61,18 +61,18 @@ async fn main() -> Result<()> {
                 .map_err(|e| anyhow::anyhow!("Failed to create directory {:?}: {}", dir, e))?;
         }
     }
-    info!("All required directories are ready");
+    info!("所有必需的目录已就绪");
 
     // Initialize database
-    info!("Initializing database...");
+    info!("正在初始化数据库...");
     let db = std::sync::Arc::new(db::DatabaseManager::new(
         &config.database.path,
         config.database.connection_pool_size as u32,
         std::time::Duration::from_millis(config.database.busy_timeout),
     )?);
-    info!("Running database migrations...");
+    info!("正在运行数据库迁移...");
     db.migrate()?;
-    info!("Database initialized successfully");
+    info!("数据库初始化成功");
 
     // Ensure default admin user exists
     ensure_admin_user(db.clone()).await?;
@@ -88,12 +88,12 @@ async fn main() -> Result<()> {
     plugin_manager.discover_plugins(&config.plugins.plugin_dir).await?;
 
     // Initialize API server
-    info!("Initializing HTTP server...");
+    info!("正在初始化 HTTP 服务器...");
     let server_url = format!("http://{}:{}", config.server.host, config.server.port);
     let server = api::ApiServer::new(config, db, plugin_manager)?;
     
-    info!("Ting Reader Backend initialized successfully");
-    info!(url = %server_url, "Server ready - starting to serve requests");
+    info!("听书后端初始化成功");
+    info!(url = %server_url, "服务器已就绪 - 开始处理请求");
 
     // Start serving (this will block until shutdown signal)
     server.serve().await?;

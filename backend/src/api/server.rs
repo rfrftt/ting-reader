@@ -142,7 +142,7 @@ impl ApiServer {
         let task_queue_clone = task_queue.clone();
         tokio::spawn(async move {
             if let Err(e) = task_queue_clone.recover_tasks().await {
-                tracing::error!("Failed to recover tasks: {}", e);
+                tracing::error!("恢复任务失败: {}", e);
             }
             task_queue_clone.start().await;
         });
@@ -167,7 +167,7 @@ impl ApiServer {
         let watcher_clone = library_watcher.clone();
         tokio::spawn(async move {
             if let Err(e) = watcher_clone.start_all().await {
-                tracing::warn!("Failed to start library watcher: {}", e);
+                tracing::warn!("启动库监听器失败: {}", e);
             }
         });
         
@@ -289,13 +289,13 @@ impl ApiServer {
             port = self.config.port,
             max_connections = self.config.max_connections,
             request_timeout = self.config.request_timeout,
-            "Starting HTTP server"
+            "正在启动 HTTP 服务器"
         );
         
         // Create TCP listener
         let listener = tokio::net::TcpListener::bind(socket_addr).await?;
         
-        info!(addr = %socket_addr, "HTTP server listening");
+        info!(addr = %socket_addr, "HTTP 服务器正在监听");
         
         // Serve with graceful shutdown
         axum::serve(listener, self.router)

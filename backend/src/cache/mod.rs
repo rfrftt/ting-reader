@@ -151,7 +151,7 @@ impl CacheManager {
             let ext = path.extension().and_then(|s| s.to_str());
             if ext == Some("cache") || ext == Some("enc") {
                 if let Err(e) = tokio::fs::remove_file(&path).await {
-                    tracing::warn!("Failed to delete file {}: {}", path.display(), e);
+                    tracing::warn!("删除文件 {} 失败: {}", path.display(), e);
                 } else {
                     count += 1;
                 }
@@ -178,7 +178,7 @@ impl CacheManager {
                 // If chapter ID is not valid, delete both .cache and .enc
                 if !valid_chapter_ids.contains(&chapter_id) && (ext == Some("cache") || ext == Some("enc")) {
                     if let Err(e) = tokio::fs::remove_file(&path).await {
-                        tracing::warn!("Failed to delete orphaned file {}: {}", path.display(), e);
+                        tracing::warn!("删除孤立文件 {} 失败: {}", path.display(), e);
                     } else {
                         count += 1;
                     }
@@ -221,7 +221,7 @@ impl CacheManager {
             
             // Remove file
             if let Err(e) = tokio::fs::remove_file(&file.file_path).await {
-                tracing::warn!("Failed to delete cache file {}: {}", file.file_path.display(), e);
+                tracing::warn!("删除缓存文件 {} 失败: {}", file.file_path.display(), e);
                 continue;
             }
             
@@ -229,10 +229,10 @@ impl CacheManager {
             current_size = current_size.saturating_sub(file.file_size);
             removed_count += 1;
             
-            tracing::debug!("Removed old cache file: {:?} (Size: {})", file.file_path, file.file_size);
+            tracing::debug!("已移除旧缓存文件: {:?} (大小: {})", file.file_path, file.file_size);
         }
         
-        tracing::info!("Cache cleanup complete. Removed {} files.", removed_count);
+        tracing::info!("缓存清理完成。移除了 {} 个文件。", removed_count);
         Ok(removed_count)
     }
 }

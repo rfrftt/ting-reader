@@ -535,12 +535,12 @@ impl PluginRegistry {
     fn version_matches(&self, version: &str, requirement: &str) -> bool {
         // Parse version and requirement using semver crate
         let Ok(ver) = Version::parse(version) else {
-            tracing::warn!("Invalid version format: {}", version);
+            tracing::warn!("无效的版本格式: {}", version);
             return false;
         };
         
         let Ok(req) = VersionReq::parse(requirement) else {
-            tracing::warn!("Invalid version requirement format: {}", requirement);
+            tracing::warn!("无效的版本要求格式: {}", requirement);
             // Fallback to exact match for invalid requirements
             return version == requirement;
         };
@@ -567,7 +567,7 @@ impl PluginRegistry {
         
         // Parse version requirement
         let Ok(req) = VersionReq::parse(version_requirement) else {
-            tracing::warn!("Invalid version requirement: {}", version_requirement);
+            tracing::warn!("无效的版本要求: {}", version_requirement);
             return None;
         };
         
