@@ -44,7 +44,7 @@ impl ScannedMetadata {
         if other.description.is_some() { self.description = other.description; }
         if other.tags.is_some() { self.tags = other.tags; }
         if other.genre.is_some() { self.genre = other.genre; }
-        if other.cover_url.is_some() { self.cover_url = other.cover_url; }
+        if let Some(c) = other.cover_url { if !c.trim().is_empty() { self.cover_url = Some(c); } }
         if other.subtitle.is_some() { self.subtitle = other.subtitle; }
         if other.published_year.is_some() { self.published_year = other.published_year; }
         if other.published_date.is_some() { self.published_date = other.published_date; }
@@ -885,7 +885,10 @@ impl LibraryScanner {
                      }
                      if extract_cover && m.cover_url.is_none() {
                          if let Some(c) = result.get("cover_url").and_then(|v| v.as_str()) {
-                             if !c.trim().is_empty() { m.cover_url = Some(c.to_string()); }
+                             if !c.trim().is_empty() { 
+                                 m.cover_url = Some(c.to_string()); 
+                                 found = true;
+                             }
                          }
                      }
                      if let Some(d) = result.get("description").and_then(|v| v.as_str()) {
