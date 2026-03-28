@@ -317,7 +317,8 @@ impl LibraryScanner {
             }
 
             let params = serde_json::json!({
-                "file_path": path.to_string_lossy()
+                "file_path": path.to_string_lossy(),
+                "extract_cover": false
             });
             
             // Try to extract metadata using plugin

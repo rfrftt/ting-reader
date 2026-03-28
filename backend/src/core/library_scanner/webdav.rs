@@ -557,8 +557,9 @@ impl LibraryScanner {
         if scraper_config.use_filename_as_title {
             book_title = cleaned_dir_name.clone();
             source = MetadataSource::Fallback;
-        } else if !meta_album.trim().is_empty() {
+        } else if !meta_album.trim().is_empty() && !meta_album.to_lowercase().starts_with("track") {
             // Priority 1/2: metadata.json or ID3 (already merged above)
+            // Bugfix: Ignore generic "Track XX" titles from ID3 metadata
             book_title = meta_album.clone();
             source = MetadataSource::FileMetadata;
         } else {
@@ -771,7 +772,7 @@ impl LibraryScanner {
                 rt
             } else if scraper_config.use_filename_as_title {
                 filename
-            } else if !meta_title.trim().is_empty() {
+            } else if !meta_title.trim().is_empty() && !meta_title.to_lowercase().starts_with("track") {
                 meta_title
             } else {
                 filename

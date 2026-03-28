@@ -687,7 +687,20 @@ impl LibraryScanner {
                             m.title = None;
                             final_meta.merge(m);
                         } else {
-                            final_meta.merge(meta);
+                            // Bugfix: If the audio metadata title is empty, or if we want to preserve the folder title as fallback,
+                            // we should still keep the extracted cover. The issue was that a bad title from audio metadata
+                            // was completely overwriting everything else.
+                            
+                            // Only merge title if it's considered valid (not empty and not a generic track name)
+                            let mut m = meta.clone();
+                            if let Some(ref title) = m.title {
+                                let lower_title = title.to_lowercase();
+                                if lower_title.starts_with("track") || lower_title.trim().is_empty() {
+                                    m.title = None; // Ignore bad embedded titles
+                                }
+                            }
+                            
+                            final_meta.merge(m);
                             if final_meta.title.is_some() {
                                 final_source = MetadataSource::FileMetadata;
                             }
@@ -855,6 +868,7 @@ impl LibraryScanner {
         }
 
         // Try plugins if title empty or not standard, OR if we need cover but didn't find one
+        // Also call plugin if extract_cover is true to ensure we attempt cover extraction even if title was found by symphonia
         if m.title.is_none() || !is_standard || (extract_cover && m.cover_url.is_none()) {
              let plugins = self.plugin_manager.find_plugins_by_type(PluginType::Format).await;
              for plugin in plugins {
@@ -866,6 +880,7 @@ impl LibraryScanner {
                  let params = serde_json::json!({ "file_path": file_path.to_string_lossy(), "extract_cover": extract_cover });
                  if let Ok(result) = self.plugin_manager.call_format(&plugin.id, FormatMethod::ExtractMetadata, params).await {
                      if let Some(t) = result.get("album").and_then(|v| v.as_str()) {
+
                          if !t.trim().is_empty() {
                              m.title = Some(t.to_string());
                              found = true;
@@ -906,6 +921,7 @@ impl LibraryScanner {
              }
         }
 
+        info!("extract_from_audio: returning found={}, meta={:?}", found, m);
         if found { Some(m) } else { None }
     }
 
