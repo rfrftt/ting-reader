@@ -1,6 +1,6 @@
 #!/bin/bash
 
-LOG_FILE="${TRIM_PKGVAR}/info.log"
+LOG_FILE="${TRIM_TEMP_LOGFILE}"
 PID_FILE="${TRIM_PKGVAR}/app.pid"
 
 # Set environment variables for Rust app
@@ -47,7 +47,9 @@ export TING_CONFIG_PATH="${TRIM_APPDEST}/server/config.toml"
 CMD="${TRIM_APPDEST}/server/ting-reader"
 
 log_msg() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> ${LOG_FILE}
+    if [ -n "$LOG_FILE" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "${LOG_FILE}"
+    fi
 }
 
 start_process() {
@@ -63,7 +65,7 @@ start_process() {
     log_msg "PORT: $TING_SERVER__PORT"
     
     # Run the process
-    $CMD >> ${LOG_FILE} 2>&1 &
+    $CMD > /dev/null 2>&1 &
     
     # write pid to pidfile
     printf "%s" "$!" > ${PID_FILE}
@@ -83,7 +85,7 @@ stop_process() {
         fi
 
         log_msg "send TERM signal to PID:${pid}..."
-        kill -TERM ${pid} >> ${LOG_FILE} 2>&1
+        kill -TERM ${pid} > /dev/null 2>&1
 
         local count=0
         while check_process "${pid}" && [ $count -lt 10 ]; do
