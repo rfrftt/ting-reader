@@ -182,6 +182,56 @@ impl WasmRuntime {
              handle as i32
          }).map_err(|e| TingError::PluginExecutionError(format!("Failed to define http_request: {}", e)))?;
 
+         // ting_http_post(url_ptr, url_len, body_ptr, body_len) -> handle (>0) or error (<0)
+         linker.func_wrap("ting_env", "http_post", |mut caller: Caller<'_, PluginState>, url_ptr: i32, url_len: i32, body_ptr: i32, body_len: i32| -> i32 {
+             let mem = match caller.get_export("memory") {
+                 Some(Extern::Memory(mem)) => mem,
+                 _ => return -1,
+             };
+             let ctx = caller.as_context();
+             let data = mem.data(&ctx);
+             
+             let url = match std::str::from_utf8(&data[url_ptr as usize..(url_ptr + url_len) as usize]) {
+                 Ok(s) => s,
+                 Err(_) => return -2,
+             };
+             
+             let req_body = data[body_ptr as usize..(body_ptr + body_len) as usize].to_vec();
+             
+             tracing::info!("插件 POST 请求 URL: {}", url);
+             
+             let client = match reqwest::blocking::Client::builder()
+                 .user_agent("TingReader/1.0")
+                 .timeout(Duration::from_secs(30))
+                 .build() {
+                     Ok(c) => c,
+                     Err(_) => return -3,
+                 };
+                 
+             let resp = match client.post(url).body(req_body).send() {
+                 Ok(r) => r,
+                 Err(_) => return -4,
+             };
+             
+             if !resp.status().is_success() {
+                 return -(resp.status().as_u16() as i32);
+             }
+             
+             let body = match resp.bytes() {
+                 Ok(b) => b.to_vec(),
+                 Err(_) => return -5,
+             };
+             
+             if let Ok(body_str) = std::str::from_utf8(&body) {
+                 tracing::info!("插件收到响应 (长度={}): {:.200}...", body.len(), body_str);
+             }
+             
+             let handle = (caller.data().http_responses.len() as u32) + 1;
+             caller.data_mut().http_responses.insert(handle, body);
+             
+             handle as i32
+         }).map_err(|e| TingError::PluginExecutionError(format!("Failed to define http_post: {}", e)))?;
+
          // ting_http_response_size(handle) -> size
          linker.func_wrap("ting_env", "http_response_size", |caller: Caller<'_, PluginState>, handle: i32| -> i32 {
              if let Some(body) = caller.data().http_responses.get(&(handle as u32)) {
