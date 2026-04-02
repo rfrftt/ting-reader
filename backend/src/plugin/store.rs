@@ -48,17 +48,25 @@ pub async fn fetch_store_plugins(client: &reqwest::Client) -> Result<Vec<StorePl
 
 /// Get the download URL for the current platform
 pub fn get_download_url(plugin: &StorePlugin) -> Result<String> {
-    // Check if download_url is a string (universal)
+    // Check if download_url is a string (universal or closed-source plugin)
     if let Some(url) = plugin.download_url.as_str() {
         return Ok(url.to_string());
     }
     
-    // Check if it's a map (platform specific)
+    // Check if it's a map (platform specific for native plugins)
     if let Some(map) = plugin.download_url.as_object() {
         let platform_key = get_platform_key();
         
         if let Some(url) = map.get(platform_key).and_then(|v| v.as_str()) {
             return Ok(url.to_string());
+        }
+        
+        // For closed-source plugins, repo might be empty, so provide a better error message
+        if plugin.repo.as_ref().map_or(true, |r| r.is_empty()) {
+            return Err(TingError::PluginLoadError(format!(
+                "Plugin {} is not available for platform '{}'. This is a closed-source plugin with limited platform support.", 
+                plugin.id, platform_key
+            )));
         }
         
         return Err(TingError::PluginLoadError(format!(
