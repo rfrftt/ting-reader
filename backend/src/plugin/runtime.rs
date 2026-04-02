@@ -232,6 +232,64 @@ impl WasmRuntime {
              handle as i32
          }).map_err(|e| TingError::PluginExecutionError(format!("Failed to define http_post: {}", e)))?;
 
+         // ting_http_get_with_token(url_ptr, url_len, token_ptr, token_len) -> handle (>0) or error (<0)
+         linker.func_wrap("ting_env", "http_get_with_token", |mut caller: Caller<'_, PluginState>, url_ptr: i32, url_len: i32, token_ptr: i32, token_len: i32| -> i32 {
+             let mem = match caller.get_export("memory") {
+                 Some(Extern::Memory(mem)) => mem,
+                 _ => return -1,
+             };
+             let ctx = caller.as_context();
+             let data = mem.data(&ctx);
+             
+             let url = match std::str::from_utf8(&data[url_ptr as usize..(url_ptr + url_len) as usize]) {
+                 Ok(s) => s,
+                 Err(_) => return -2,
+             };
+             
+             let token = match std::str::from_utf8(&data[token_ptr as usize..(token_ptr + token_len) as usize]) {
+                 Ok(s) => s,
+                 Err(_) => return -2,
+             };
+             
+             tracing::info!("插件 GET (Auth) 请求 URL: {}", url);
+             
+             let client = match reqwest::blocking::Client::builder()
+                 .user_agent("TingReader/1.0")
+                 .timeout(Duration::from_secs(30))
+                 .build() {
+                     Ok(c) => c,
+                     Err(_) => return -3,
+                 };
+                 
+             let mut req = client.get(url);
+             if !token.is_empty() {
+                 req = req.header("Authorization", format!("Bearer {}", token));
+             }
+             
+             let resp = match req.send() {
+                 Ok(r) => r,
+                 Err(_) => return -4,
+             };
+             
+             if !resp.status().is_success() {
+                 return -(resp.status().as_u16() as i32);
+             }
+             
+             let body = match resp.bytes() {
+                 Ok(b) => b.to_vec(),
+                 Err(_) => return -5,
+             };
+             
+             if let Ok(body_str) = std::str::from_utf8(&body) {
+                 tracing::info!("插件收到响应 (长度={}): {:.200}...", body.len(), body_str);
+             }
+             
+             let handle = (caller.data().http_responses.len() as u32) + 1;
+             caller.data_mut().http_responses.insert(handle, body);
+             
+             handle as i32
+         }).map_err(|e| TingError::PluginExecutionError(format!("Failed to define http_get_with_token: {}", e)))?;
+
          // ting_http_response_size(handle) -> size
          linker.func_wrap("ting_env", "http_response_size", |caller: Caller<'_, PluginState>, handle: i32| -> i32 {
              if let Some(body) = caller.data().http_responses.get(&(handle as u32)) {
