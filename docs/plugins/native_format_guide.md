@@ -28,6 +28,8 @@ serde_json = "1.0"
 # 其他依赖...
 ```
 
+提供插件配置文件 `plugin.json`（详情请参考 [插件开发指南](./plugin-dev.md)）。
+
 ### 1.2 核心代码 (src/lib.rs)
 ```rust
 use std::ffi::{CStr, CString};
@@ -74,7 +76,13 @@ fn detect(params: Value) -> Result<Value, String> {
 }
 
 fn extract_metadata(params: Value) -> Result<Value, String> {
+    // params 包含: file_path (文件绝对路径), extract_cover (布尔值，是否需要提取封面)
+    let path = params["file_path"].as_str().ok_or("Missing path")?;
+    let extract_cover = params.get("extract_cover").and_then(|v| v.as_bool()).unwrap_or(true);
+    
     // 读取元数据...
+    // 如果 extract_cover 为 true 且需要从音频中提取封面并写入磁盘，请在此时处理
+    // 提取成功后返回 cover_url (可以是本地路径或 URL)
     Ok(serde_json::json!({ "title": "...", "artist": "..." }))
 }
 

@@ -26,6 +26,8 @@ serde_json = "1.0"
 # 其他依赖...
 ```
 
+提供插件配置文件 `plugin.json`（详情请参考 [插件开发指南](./plugin-dev.md)）。
+
 ### 1.2 核心代码 (src/lib.rs)
 ```rust
 use std::ffi::{CStr, CString};
