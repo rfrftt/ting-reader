@@ -125,14 +125,61 @@ cargo build --target wasm32-wasip1 --release
 编译产物位于 `target/wasm32-wasip1/release/my_scraper_wasm.wasm`。
 
 ## 2. 宿主函数
-WASM 插件可以通过 `extern "C"` 调用宿主提供的功能：
+WASM 插件可以通过 `extern "C"` 调用宿主提供的功能，由于沙箱隔离，插件必须通过宿主函数进行网络请求：
 
 ```rust
 #[link(wasm_import_module = "ting_env")]
 extern "C" {
+    /// 发起 HTTP GET 请求，返回请求句柄（≥0）或错误码（<0）。
     fn http_request(url_ptr: *const u8, url_len: i32) -> i32;
+    /// 发起 HTTP POST 请求，返回请求句柄（≥0）或错误码（<0）。
+    fn http_post(url_ptr: *const u8, url_len: i32, body_ptr: *const u8, body_len: i32) -> i32;
+    /// 发起带有 Bearer Token 的 HTTP GET 请求
+    fn http_get_with_token(url_ptr: *const u8, url_len: i32, token_ptr: *const u8, token_len: i32) -> i32;
+    /// 发起自定义 HTTP 请求（支持指定 method 和 headers JSON）
+    fn http_request_with_headers(
+        url_ptr: *const u8, url_len: i32,
+        method_ptr: *const u8, method_len: i32,
+        headers_ptr: *const u8, headers_len: i32,
+        body_ptr: *const u8, body_len: i32
+    ) -> i32;
+    /// 获取响应体长度（字节）。
     fn http_response_size(handle: i32) -> i32;
+    /// 读取响应体到缓冲区，返回实际读取的字节数（≤ len）或错误码。
     fn http_read_body(handle: i32, ptr: *mut u8, len: i32) -> i32;
+}
+```
+
+### 2.1 封装示例：发起自定义网络请求
+宿主提供的函数需要手动进行指针传递，在业务逻辑中，推荐像下面这样封装一层 Rust 函数，以方便直接使用 `&str` 等数据类型：
+
+```rust
+fn fetch_url_custom(url: &str, method: &str, headers_json: &str, body_data: &[u8]) -> Result<Vec<u8>, String> {
+    let handle = unsafe {
+        http_request_with_headers(
+            url.as_ptr(), url.len() as i32,
+            method.as_ptr(), method.len() as i32,
+            headers_json.as_ptr(), headers_json.len() as i32,
+            body_data.as_ptr(), body_data.len() as i32
+        )
+    };
+    
+    if handle < 0 {
+        return Err(format!("HTTP custom request failed: {}", -handle));
+    }
+
+    let size = unsafe { http_response_size(handle) };
+    if size < 0 {
+        return Err("Failed to get response size".to_string());
+    }
+
+    let mut body = vec![0u8; size as usize];
+    let read = unsafe { http_read_body(handle, body.as_mut_ptr(), size) };
+    if read < 0 {
+        return Err("Failed to read body".to_string());
+    }
+    
+    Ok(body)
 }
 ```
 
