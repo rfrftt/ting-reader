@@ -13,23 +13,24 @@ use axum::{
 use uuid::Uuid;
 use super::AppState;
 
+use crate::auth::middleware::AuthUser;
+
 /// Handler for GET /api/v1/series - List all series
 pub async fn list_series(
     State(state): State<AppState>,
+    user: AuthUser,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<impl IntoResponse> {
     let library_id = params.get("library_id").cloned();
+    let is_admin = user.role == "admin";
 
-    let series_list = if let Some(lid) = library_id {
-        state.series_repo.find_by_library(&lid).await?
-    } else {
-        state.series_repo.find_all().await?
-    };
+    let series_list = state.series_repo.find_with_filters(&user.id, is_admin, library_id).await?;
 
     let mut response = Vec::new();
     for series in series_list {
         let mut s_res = SeriesResponse::from(series.clone());
-        let books = state.series_repo.find_books_by_series(&series.id).await?;
+        let books = state.series_repo.find_books_by_series_with_filters(&series.id, &user.id, is_admin).await?;
+        
         s_res.books = books.into_iter().map(|(b, _)| BookResponse::from(b)).collect();
         response.push(s_res);
     }
@@ -40,13 +41,21 @@ pub async fn list_series(
 /// Handler for GET /api/v1/series/:id - Get series by ID
 pub async fn get_series(
     State(state): State<AppState>,
+    user: AuthUser,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse> {
     let series = state.series_repo.find_by_id(&id).await?
         .ok_or_else(|| TingError::NotFound(format!("Series with id {} not found", id)))?;
 
+    let is_admin = user.role == "admin";
+
+    // Check if user has access to this series
+    if !state.series_repo.check_access(&series.id, &user.id, is_admin).await? {
+        return Err(TingError::PermissionDenied("No access to this series".to_string()));
+    }
+
     let mut response = SeriesResponse::from(series.clone());
-    let books = state.series_repo.find_books_by_series(&series.id).await?;
+    let books = state.series_repo.find_books_by_series_with_filters(&series.id, &user.id, is_admin).await?;
     response.books = books.into_iter().map(|(b, _)| BookResponse::from(b)).collect();
 
     Ok(Json(response))
@@ -55,8 +64,13 @@ pub async fn get_series(
 /// Handler for POST /api/v1/series - Create a new series
 pub async fn create_series(
     State(state): State<AppState>,
+    user: AuthUser,
     Json(req): Json<CreateSeriesRequest>,
 ) -> Result<impl IntoResponse> {
+    if user.role != "admin" {
+        return Err(TingError::PermissionDenied("Only admin can create series".to_string()));
+    }
+
     let series_id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -128,9 +142,14 @@ pub async fn create_series(
 /// Handler for PUT /api/v1/series/:id - Update a series
 pub async fn update_series(
     State(state): State<AppState>,
+    user: AuthUser,
     Path(id): Path<String>,
     Json(req): Json<UpdateSeriesRequest>,
 ) -> Result<impl IntoResponse> {
+    if user.role != "admin" {
+        return Err(TingError::PermissionDenied("Only admin can update series".to_string()));
+    }
+
     let existing_series = state.series_repo.find_by_id(&id).await?
         .ok_or_else(|| TingError::NotFound(format!("Series with id {} not found", id)))?;
 
@@ -205,8 +224,13 @@ pub async fn update_series(
 /// Handler for DELETE /api/v1/series/:id - Delete a series
 pub async fn delete_series(
     State(state): State<AppState>,
+    user: AuthUser,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse> {
+    if user.role != "admin" {
+        return Err(TingError::PermissionDenied("Only admin can delete series".to_string()));
+    }
+
     if state.series_repo.find_by_id(&id).await?.is_none() {
         return Err(TingError::NotFound(format!("Series with id {} not found", id)));
     }

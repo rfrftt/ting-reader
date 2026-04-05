@@ -176,13 +176,99 @@ impl SeriesRepository {
 
 
 
+    /// Find series with filters and access control
+    pub async fn find_with_filters(
+        &self,
+        user_id: &str,
+        is_admin: bool,
+        library_id: Option<String>,
+    ) -> Result<Vec<Series>> {
+        let user_id = user_id.to_string();
+        self.db.execute(move |conn| {
+            let mut query = "SELECT s.id, s.library_id, s.title, s.author, s.narrator, s.cover_url, s.description, s.created_at, s.updated_at \
+                             FROM series s".to_string();
+            let mut params: Vec<String> = Vec::new();
+            let mut conditions: Vec<String> = Vec::new();
+
+            if let Some(lid) = library_id {
+                conditions.push("s.library_id = ?".to_string());
+                params.push(lid);
+            }
+
+            // Access Control
+            if !is_admin {
+                conditions.push("(
+                    s.library_id IN (SELECT library_id FROM user_library_access WHERE user_id = ?)
+                    OR
+                    s.id IN (SELECT series_id FROM series_books WHERE book_id IN (SELECT book_id FROM user_book_access WHERE user_id = ?))
+                )".to_string());
+                params.push(user_id.clone());
+                params.push(user_id.clone());
+            }
+
+            if !conditions.is_empty() {
+                query += " WHERE ";
+                query += &conditions.join(" AND ");
+            }
+
+            query += " ORDER BY s.created_at DESC";
+
+            let mut stmt = conn.prepare(&query).map_err(TingError::DatabaseError)?;
+            
+            let series = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                Ok(Series {
+                    id: row.get(0)?,
+                    library_id: row.get(1)?,
+                    title: row.get(2)?,
+                    author: row.get(3)?,
+                    narrator: row.get(4)?,
+                    cover_url: row.get(5)?,
+                    description: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            }).map_err(TingError::DatabaseError)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(TingError::DatabaseError)?;
+            
+            Ok(series)
+        }).await
+    }
+
+    /// Check if a user has access to a series
+    pub async fn check_access(&self, series_id: &str, user_id: &str, is_admin: bool) -> Result<bool> {
+        if is_admin {
+            return Ok(true);
+        }
+        
+        let series_id = series_id.to_string();
+        let user_id = user_id.to_string();
+        
+        self.db.execute(move |conn| {
+            let has_access: bool = conn.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM series s
+                    WHERE s.id = ? AND (
+                        s.library_id IN (SELECT library_id FROM user_library_access WHERE user_id = ?)
+                        OR
+                        s.id IN (SELECT series_id FROM series_books WHERE book_id IN (SELECT book_id FROM user_book_access WHERE user_id = ?))
+                    )
+                )",
+                rusqlite::params![&series_id, &user_id, &user_id],
+                |row| row.get(0),
+            ).unwrap_or(false);
+            
+            Ok(has_access)
+        }).await
+    }
+
     /// Find books in a series
     pub async fn find_books_by_series(&self, series_id: &str) -> Result<Vec<(Book, i32)>> {
         let series_id = series_id.to_string();
         self.db.execute(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT b.id, b.library_id, b.title, b.author, b.narrator, b.cover_url, b.theme_color, \
-                 b.description, b.skip_intro, b.skip_outro, b.path, b.hash, b.tags, b.created_at, \
+                 b.description, b.skip_intro, b.skip_outro, b.path, b.hash, b.tags, b.genre, b.created_at, \
                  b.manual_corrected, b.match_pattern, b.chapter_regex, sb.book_order \
                  FROM books b \
                  JOIN series_books sb ON b.id = sb.book_id \
@@ -205,13 +291,76 @@ impl SeriesRepository {
                     path: row.get(10)?,
                     hash: row.get(11)?,
                     tags: row.get(12)?,
-                    created_at: row.get(13)?,
-                    manual_corrected: row.get(14).unwrap_or(0),
-                    match_pattern: row.get(15).unwrap_or(None),
-                    chapter_regex: row.get(16).unwrap_or(None),
-                    genre: None,
+                    genre: row.get(13)?,
+                    created_at: row.get(14)?,
+                    manual_corrected: row.get(15).unwrap_or(0),
+                    match_pattern: row.get(16).unwrap_or(None),
+                    chapter_regex: row.get(17).unwrap_or(None),
                 };
-                let order: i32 = row.get(17)?;
+                let order: i32 = row.get(18)?;
+                Ok((book, order))
+            }).map_err(TingError::DatabaseError)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(TingError::DatabaseError)?;
+
+            Ok(books)
+        }).await
+    }
+
+    /// Find books in a series with filters and access control
+    pub async fn find_books_by_series_with_filters(
+        &self,
+        series_id: &str,
+        user_id: &str,
+        is_admin: bool,
+    ) -> Result<Vec<(Book, i32)>> {
+        let series_id = series_id.to_string();
+        let user_id = user_id.to_string();
+        self.db.execute(move |conn| {
+            let mut query = "SELECT b.id, b.library_id, b.title, b.author, b.narrator, b.cover_url, b.theme_color, \
+                             b.description, b.skip_intro, b.skip_outro, b.path, b.hash, b.tags, b.genre, b.created_at, \
+                             b.manual_corrected, b.match_pattern, b.chapter_regex, sb.book_order \
+                             FROM books b \
+                             JOIN series_books sb ON b.id = sb.book_id \
+                             WHERE sb.series_id = ?".to_string();
+            let mut params: Vec<String> = vec![series_id];
+
+            if !is_admin {
+                query += " AND (
+                    b.library_id IN (SELECT library_id FROM user_library_access WHERE user_id = ?)
+                    OR
+                    b.id IN (SELECT book_id FROM user_book_access WHERE user_id = ?)
+                )";
+                params.push(user_id.clone());
+                params.push(user_id.clone());
+            }
+
+            query += " ORDER BY sb.book_order ASC";
+
+            let mut stmt = conn.prepare(&query).map_err(TingError::DatabaseError)?;
+
+            let books = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                let book = Book {
+                    id: row.get(0)?,
+                    library_id: row.get(1)?,
+                    title: row.get(2)?,
+                    author: row.get(3)?,
+                    narrator: row.get(4)?,
+                    cover_url: row.get(5)?,
+                    theme_color: row.get(6)?,
+                    description: row.get(7)?,
+                    skip_intro: row.get(8)?,
+                    skip_outro: row.get(9)?,
+                    path: row.get(10)?,
+                    hash: row.get(11)?,
+                    tags: row.get(12)?,
+                    genre: row.get(13)?,
+                    created_at: row.get(14)?,
+                    manual_corrected: row.get(15).unwrap_or(0),
+                    match_pattern: row.get(16).unwrap_or(None),
+                    chapter_regex: row.get(17).unwrap_or(None),
+                };
+                let order: i32 = row.get(18)?;
                 Ok((book, order))
             }).map_err(TingError::DatabaseError)?
             .collect::<std::result::Result<Vec<_>, _>>()
