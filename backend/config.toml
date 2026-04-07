@@ -9,7 +9,7 @@ request_timeout = 30  # seconds
 [database]
 path = "./data/ting-reader.db"
 connection_pool_size = 10
-busy_timeout = 5000  # milliseconds
+busy_timeout = 30000  # milliseconds (30 seconds, increased from 5 seconds)
 
 [plugins]
 plugin_dir = "./plugins"
@@ -45,3 +45,9 @@ data_dir = "./data"
 temp_dir = "./temp"
 local_storage_root = "./storage"  # Root directory for local libraries
 max_disk_usage = 2147483648  # 2 GB
+
+[audio]
+# Audio streaming configuration
+cache_enabled = true
+cache_size = 104857600  # 100 MB
+buffer_size = 65536  # 64 KB

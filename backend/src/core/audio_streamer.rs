@@ -276,13 +276,38 @@ impl AudioStreamer {
             hint.with_extension(ext);
         }
 
-        let format_opts = FormatOptions::default();
+        // Configure format options
+        // Note: Symphonia 0.5 doesn't have a configurable probe_limit
+        // The default limit is sufficient for most files
+        let format_opts = FormatOptions {
+            enable_gapless: true,
+            ..Default::default()
+        };
+        
         let metadata_opts = MetadataOptions::default();
 
         let probed = symphonia::default::get_probe()
             .format(&hint, mss, &format_opts, &metadata_opts)
             .map_err(|e| {
-                TingError::InvalidRequest(format!("Failed to probe audio format: {}", e))
+                let error_msg = e.to_string();
+                if error_msg.contains("probe limit") || error_msg.contains("unsupported format") {
+                    tracing::warn!(
+                        "音频格式探测失败: {:?}, 错误: {}",
+                        file_path,
+                        error_msg
+                    );
+                    TingError::InvalidRequest(format!(
+                        "音频文件格式探测失败（文件可能损坏或格式不支持）: {}",
+                        error_msg
+                    ))
+                } else {
+                    tracing::warn!(
+                        "音频格式探测失败: {:?}, 错误: {}",
+                        file_path,
+                        error_msg
+                    );
+                    TingError::InvalidRequest(format!("音频格式探测失败: {}", error_msg))
+                }
             })?;
 
         let mut format_reader = probed.format;

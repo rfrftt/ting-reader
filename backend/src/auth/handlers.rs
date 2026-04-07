@@ -58,7 +58,7 @@ pub async fn register(
         Err(e) => {
             tracing::warn!(target: "audit::login", "用户 '{}' 注册失败: {}", req.username, e);
             Err(TingError::InvalidRequest(
-                "Username already exists".to_string(),
+                "用户名已存在".to_string(),
             ))
         }
     }
@@ -76,13 +76,13 @@ pub async fn login(
         .user_repo
         .find_by_username(&req.username)
         .await?
-        .ok_or_else(|| TingError::AuthenticationError("Invalid credentials".to_string()))?;
+        .ok_or_else(|| TingError::AuthenticationError("用户名或密码错误".to_string()))?;
 
     // Verify password
     let is_valid = verify_password(&req.password, &user.password_hash)?;
     if !is_valid {
         tracing::warn!(target: "audit::login", "用户 '{}' 登录失败：密码错误", req.username);
-        return Err(TingError::AuthenticationError("Invalid credentials".to_string()));
+        return Err(TingError::AuthenticationError("用户名或密码错误".to_string()));
     }
 
     // Generate JWT token
@@ -109,7 +109,7 @@ pub async fn get_me(
 
     // Fetch full user info from database
     let db_user = state.user_repo.find_by_id(&user.id).await?
-        .ok_or_else(|| TingError::AuthenticationError("User not found".to_string()))?;
+        .ok_or_else(|| TingError::AuthenticationError("用户不存在".to_string()))?;
 
     Ok(Json(UserInfo {
         id: db_user.id,
@@ -128,7 +128,7 @@ pub async fn update_me(
 
     // Fetch current user
     let mut db_user = state.user_repo.find_by_id(&user.id).await?
-        .ok_or_else(|| TingError::AuthenticationError("User not found".to_string()))?;
+        .ok_or_else(|| TingError::AuthenticationError("用户不存在".to_string()))?;
 
     // Update username if provided
     if let Some(new_username) = req.username {

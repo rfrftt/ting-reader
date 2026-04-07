@@ -293,14 +293,68 @@ impl IntoResponse for TingError {
         let status_code = self.status_code();
         let error_response = ErrorResponse::from_error(&self);
 
-        // Log the error with trace ID
-        tracing::error!(
-            error_type = self.error_type(),
-            trace_id = %error_response.trace_id,
-            status_code = %status_code,
-            "Request failed: {}",
-            self
-        );
+        // Log the error with appropriate level based on error type
+        match &self {
+            // Authentication errors are warnings, not errors (expected failures)
+            TingError::AuthenticationError(_) => {
+                tracing::warn!(
+                    error_type = self.error_type(),
+                    trace_id = %error_response.trace_id,
+                    status_code = %status_code,
+                    "认证失败: {}",
+                    self
+                );
+            }
+            // Invalid requests are also warnings (client errors)
+            TingError::InvalidRequest(_) 
+            | TingError::ValidationError(_)
+            | TingError::NotFound(_) => {
+                tracing::warn!(
+                    error_type = self.error_type(),
+                    trace_id = %error_response.trace_id,
+                    status_code = %status_code,
+                    "请求失败: {}",
+                    self
+                );
+            }
+            // Permission errors are warnings
+            TingError::PermissionDenied(_) => {
+                tracing::warn!(
+                    error_type = self.error_type(),
+                    trace_id = %error_response.trace_id,
+                    status_code = %status_code,
+                    "权限不足: {}",
+                    self
+                );
+            }
+            // All other errors are actual system errors
+            _ => {
+                // Check if it's a database lock error (should be warning, not error)
+                if let TingError::DatabaseError(ref db_err) = self {
+                    if let rusqlite::Error::SqliteFailure(ref err, _) = db_err {
+                        if err.code == rusqlite::ErrorCode::DatabaseBusy 
+                            || err.code == rusqlite::ErrorCode::DatabaseLocked {
+                            tracing::warn!(
+                                error_type = self.error_type(),
+                                trace_id = %error_response.trace_id,
+                                status_code = %status_code,
+                                "数据库繁忙: {}",
+                                self
+                            );
+                            return (status_code, Json(error_response)).into_response();
+                        }
+                    }
+                }
+                
+                tracing::error!(
+                    error_type = self.error_type(),
+                    trace_id = %error_response.trace_id,
+                    status_code = %status_code,
+                    "请求失败: {}",
+                    self
+                );
+            }
+        }
 
         (status_code, Json(error_response)).into_response()
     }

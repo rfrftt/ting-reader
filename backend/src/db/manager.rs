@@ -40,6 +40,10 @@ impl DatabaseManager {
                 conn.busy_timeout(busy_timeout)?;
                 // Enable WAL mode for better concurrency
                 conn.execute_batch("PRAGMA journal_mode = WAL;")?;
+                // Optimize for concurrent access
+                conn.execute_batch("PRAGMA synchronous = NORMAL;")?;
+                conn.execute_batch("PRAGMA cache_size = -64000;")?; // 64MB cache
+                conn.execute_batch("PRAGMA temp_store = MEMORY;")?;
                 Ok(())
             });
 
@@ -91,8 +95,12 @@ impl DatabaseManager {
 
     /// Get a connection from the pool
     pub fn get_connection(&self) -> Result<PooledConnection<SqliteConnectionManager>> {
-        self.pool.get().map_err(|_e| {
-            TingError::DatabaseError(rusqlite::Error::InvalidQuery)
+        self.pool.get().map_err(|e| {
+            tracing::warn!("获取数据库连接失败: {}", e);
+            TingError::DatabaseError(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+                Some("数据库连接池繁忙，请稍后重试".to_string())
+            ))
         })
     }
 
@@ -108,13 +116,17 @@ impl DatabaseManager {
         let pool = self.pool.clone();
         
         task::spawn_blocking(move || {
-            let conn = pool.get().map_err(|_e| {
-                TingError::DatabaseError(rusqlite::Error::InvalidQuery)
+            let conn = pool.get().map_err(|e| {
+                tracing::warn!("获取数据库连接失败: {}", e);
+                TingError::DatabaseError(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+                    Some("数据库连接池繁忙，请稍后重试".to_string())
+                ))
             })?;
             f(&conn)
         })
         .await
-        .map_err(|e| TingError::TaskError(format!("Database task panicked: {}", e)))?
+        .map_err(|e| TingError::TaskError(format!("数据库任务执行失败: {}", e)))?
     }
 
     /// Execute a database operation within a transaction
@@ -129,8 +141,12 @@ impl DatabaseManager {
         let pool = self.pool.clone();
         
         task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(|_e| {
-                TingError::DatabaseError(rusqlite::Error::InvalidQuery)
+            let mut conn = pool.get().map_err(|e| {
+                tracing::warn!("获取数据库连接失败: {}", e);
+                TingError::DatabaseError(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+                    Some("数据库连接池繁忙，请稍后重试".to_string())
+                ))
             })?;
             
             let tx = conn.transaction().map_err(TingError::DatabaseError)?;
@@ -140,7 +156,7 @@ impl DatabaseManager {
             Ok(result)
         })
         .await
-        .map_err(|e| TingError::TaskError(format!("Transaction task panicked: {}", e)))?
+        .map_err(|e| TingError::TaskError(format!("事务执行失败: {}", e)))?
     }
 
     /// Execute database migrations
@@ -197,8 +213,12 @@ impl DatabaseManager {
                 })?;
             }
 
-            let src_conn = pool.get().map_err(|_e| {
-                TingError::DatabaseError(rusqlite::Error::InvalidQuery)
+            let src_conn = pool.get().map_err(|e| {
+                tracing::warn!("获取数据库连接失败: {}", e);
+                TingError::DatabaseError(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+                    Some("数据库连接池繁忙，请稍后重试".to_string())
+                ))
             })?;
             
             // Open destination database

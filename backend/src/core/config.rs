@@ -51,6 +51,7 @@ pub struct Config {
     pub logging: LoggingConfig,
     pub security: SecurityConfig,
     pub storage: StorageConfig,
+    pub audio: AudioConfig,
 }
 
 impl Config {
@@ -94,7 +95,10 @@ impl Config {
             .set_default("storage.data_dir", "./data")?
             .set_default("storage.temp_dir", "./temp")?
             .set_default("storage.local_storage_root", "./storage")?
-            .set_default("storage.max_disk_usage", 10737418240u64)?; // 10 GB
+            .set_default("storage.max_disk_usage", 10737418240u64)?  // 10 GB
+            .set_default("audio.cache_enabled", true)?
+            .set_default("audio.cache_size", 104857600)?  // 100 MB
+            .set_default("audio.buffer_size", 65536)?;  // 64 KB
         
         // 2. Load from config file if specified (medium priority)
         // Check CLI arg first, then TING_CONFIG_PATH env var
@@ -197,7 +201,10 @@ impl Config {
             .set_default("security.hsts_max_age", 31536000)?
             .set_default("storage.data_dir", "./data")?
             .set_default("storage.temp_dir", "./temp")?
-            .set_default("storage.max_disk_usage", 10737418240u64)?;
+            .set_default("storage.max_disk_usage", 10737418240u64)?
+            .set_default("audio.cache_enabled", true)?
+            .set_default("audio.cache_size", 104857600)?  // 100 MB
+            .set_default("audio.buffer_size", 65536)?;  // 64 KB
         
         // Override with environment variables
         let config: Config = builder
@@ -227,6 +234,7 @@ impl Config {
         self.logging.validate()?;
         self.security.validate()?;
         self.storage.validate()?;
+        self.audio.validate()?;
         Ok(())
     }
 }
@@ -474,6 +482,27 @@ impl StorageConfig {
         
         if self.max_disk_usage == 0 {
             return Err(ConfigError::InvalidStorage("max_disk_usage must be greater than 0".to_string()));
+        }
+        
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AudioConfig {
+    pub cache_enabled: bool,
+    pub cache_size: usize, // bytes
+    pub buffer_size: usize, // bytes
+}
+
+impl AudioConfig {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.cache_enabled && self.cache_size == 0 {
+            return Err(ConfigError::InvalidStorage("audio.cache_size must be greater than 0 when cache is enabled".to_string()));
+        }
+        
+        if self.buffer_size == 0 {
+            return Err(ConfigError::InvalidStorage("audio.buffer_size must be greater than 0".to_string()));
         }
         
         Ok(())

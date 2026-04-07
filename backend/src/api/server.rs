@@ -112,7 +112,19 @@ impl ApiServer {
         
         let nfo_manager = Arc::new(crate::core::nfo_manager::NfoManager::new(config.storage.data_dir.clone()));
         
-        let streamer_config = crate::core::audio_streamer::StreamerConfig::default();
+        // Create audio streamer with configuration
+        let streamer_config = crate::core::audio_streamer::StreamerConfig {
+            cache_enabled: config.audio.cache_enabled,
+            cache_size: config.audio.cache_size,
+            buffer_size: config.audio.buffer_size,
+            supported_formats: vec![
+                crate::core::audio_streamer::AudioFormat::Mp3,
+                crate::core::audio_streamer::AudioFormat::M4a,
+                crate::core::audio_streamer::AudioFormat::Aac,
+                crate::core::audio_streamer::AudioFormat::Flac,
+                crate::core::audio_streamer::AudioFormat::Wma,
+            ],
+        };
         let audio_streamer = Arc::new(crate::core::audio_streamer::AudioStreamer::new(streamer_config));
 
         // Create StorageService

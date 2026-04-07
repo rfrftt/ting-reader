@@ -47,7 +47,7 @@ pub async fn authenticate(
         None => {
             // Check if it's a public endpoint (optional, but good practice)
             // For now, return 401
-            let error = TingError::AuthenticationError("Missing authentication token".to_string());
+            let error = TingError::AuthenticationError("缺少认证令牌".to_string());
             return error.into_response();
         }
     };
@@ -68,7 +68,7 @@ pub async fn authenticate(
     let user = match user_result {
         Ok(Some(u)) => u,
         Ok(None) => {
-            let error = TingError::AuthenticationError("User not found".to_string());
+            let error = TingError::AuthenticationError("用户不存在".to_string());
             return error.into_response();
         }
         Err(e) => return e.into_response(), // Database error
@@ -91,7 +91,7 @@ pub fn get_auth_user(request: &Request) -> Result<AuthUser> {
         .extensions()
         .get::<AuthUser>()
         .cloned()
-        .ok_or_else(|| TingError::AuthenticationError("User not authenticated".to_string()))
+        .ok_or_else(|| TingError::AuthenticationError("用户未认证".to_string()))
 }
 
 
@@ -114,6 +114,6 @@ where
             .extensions
             .get::<AuthUser>()
             .cloned()
-            .ok_or_else(|| TingError::AuthenticationError("User not authenticated".to_string()))
+            .ok_or_else(|| TingError::AuthenticationError("用户未认证".to_string()))
     }
 }

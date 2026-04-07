@@ -365,7 +365,9 @@ impl NpmManager {
         
         // Check for "npm_dependencies" field
         if let Some(npm_deps) = plugin_json.get("npm_dependencies") {
+            // Support both object format and array format
             if let Some(deps_obj) = npm_deps.as_object() {
+                // Object format: { "axios": "^1.6.0", "lodash": "^4.17.21" }
                 for (name, version) in deps_obj {
                     if let Some(version_str) = version.as_str() {
                         dependencies.push(NpmDependency::new(
@@ -373,15 +375,34 @@ impl NpmManager {
                             version_str.to_string(),
                         ));
                     } else {
-                        warn!("Invalid npm dependency version for {}: {:?}", name, version);
+                        warn!("npm 依赖版本格式无效 {}: {:?}", name, version);
+                    }
+                }
+            } else if let Some(deps_array) = npm_deps.as_array() {
+                // Array format: [{ "name": "axios", "version": "^1.6.0" }]
+                for dep in deps_array {
+                    if let Some(dep_obj) = dep.as_object() {
+                        if let (Some(name), Some(version)) = (
+                            dep_obj.get("name").and_then(|v| v.as_str()),
+                            dep_obj.get("version").and_then(|v| v.as_str())
+                        ) {
+                            dependencies.push(NpmDependency::new(
+                                name.to_string(),
+                                version.to_string(),
+                            ));
+                        } else {
+                            warn!("npm 依赖缺少 name 或 version 字段: {:?}", dep);
+                        }
+                    } else {
+                        warn!("npm 依赖数组元素不是对象: {:?}", dep);
                     }
                 }
             } else {
-                warn!("npm_dependencies field is not an object");
+                warn!("npm_dependencies 字段格式无效，应为对象或数组");
             }
         }
         
-        debug!("Parsed {} npm dependencies", dependencies.len());
+        debug!("解析到 {} 个 npm 依赖", dependencies.len());
         dependencies
     }
     
