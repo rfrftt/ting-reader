@@ -13,13 +13,12 @@ on:
       - '.github/workflows/docker-publish.yml'
 
 jobs:
-  docker:
+  prepare:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     outputs:
       version: ${{ steps.get_version.outputs.version }}
       release_exists: ${{ steps.check_release.outputs.exists }}
+      should_build: ${{ steps.filter.outputs.docker }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -37,21 +36,6 @@ jobs:
             fpk:
               - '.github/ting-reader-fpk/**'
               - '.github/workflows/fnpack'
-            version:
-              - 'package.json'
-            code:
-              - 'backend/**'
-              - 'frontend/**'
-              - 'Dockerfile'
-              - 'package.json'
-              - 'package-lock.json'
-              - 'docker-compose.yml'
-              - '*.md'
-              - 'LICENSE'
-              - '.gitignore'
-              - '.dockerignore'
-              - '.gitattributes'
-              - 'image/**'
 
       - name: Get version from package.json
         id: get_version
@@ -73,54 +57,145 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up QEMU for multi-arch
-        if: github.event_name == 'workflow_dispatch' && steps.check_release.outputs.exists == 'true'
-        uses: docker/setup-qemu-action@v3
+  docker:
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        if: steps.check_release.outputs.exists != 'true' || github.event_name == 'workflow_dispatch'
         uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
-        if: github.event_name != 'pull_request' && (steps.check_release.outputs.exists != 'true' || github.event_name == 'workflow_dispatch')
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push Docker image (Beta)
-        if: github.event_name == 'workflow_dispatch' && steps.check_release.outputs.exists == 'true'
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: dqsq2e2/ting-reader
+          tags: |
+            type=raw,value=beta
+
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: dqsq2e2/ting-reader:beta
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=dqsq2e2/ting-reader,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=build-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=build-${{ matrix.platform }}
 
-      - name: Retag and Push Release Images
-        if: steps.check_release.outputs.exists != 'true'
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: [prepare, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Create manifest list and push (Beta)
+        if: github.event_name == 'workflow_dispatch' && needs.prepare.outputs.release_exists == 'true'
+        working-directory: /tmp/digests
         run: |
           docker buildx imagetools create \
+            --tag dqsq2e2/ting-reader:beta \
+            $(printf 'dqsq2e2/ting-reader@sha256:%s ' *)
+
+      - name: Create manifest list and push (Release)
+        if: needs.prepare.outputs.release_exists != 'true'
+        working-directory: /tmp/digests
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          docker buildx imagetools create \
             --tag dqsq2e2/ting-reader:latest \
-            --tag dqsq2e2/ting-reader:${{ env.VERSION }} \
-            dqsq2e2/ting-reader:beta
+            --tag dqsq2e2/ting-reader:$VERSION \
+            $(printf 'dqsq2e2/ting-reader@sha256:%s ' *)
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect dqsq2e2/ting-reader:${{ needs.prepare.outputs.release_exists == 'true' && 'beta' || needs.prepare.outputs.version }}
+
+  release:
+    needs: [prepare, merge]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            fpk:
+              - '.github/ting-reader-fpk/**'
+              - '.github/workflows/fnpack'
 
       - name: Prepare fnpack
-        if: steps.check_release.outputs.exists != 'true' || steps.filter.outputs.fpk == 'true'
+        if: needs.prepare.outputs.release_exists != 'true' || steps.filter.outputs.fpk == 'true'
         run: |
           chmod +x .github/workflows/fnpack
           sudo mv .github/workflows/fnpack /usr/local/bin/fnpack
 
       - name: Build FPK (Formal)
-        if: steps.check_release.outputs.exists != 'true'
+        if: needs.prepare.outputs.release_exists != 'true'
         run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
           cp .github/ting-reader-fpk/manifest .github/ting-reader-fpk/manifest.bak
-          sed -i "s/^version[[:space:]]*=.*/version = ${{ env.VERSION }}/" .github/ting-reader-fpk/manifest
+          sed -i "s/^version[[:space:]]*=.*/version = $VERSION/" .github/ting-reader-fpk/manifest
           fnpack build --directory .github/ting-reader-fpk
-          mv ting-reader.fpk ting-reader-${{ env.VERSION }}.fpk
+          mv ting-reader.fpk ting-reader-$VERSION.fpk
           mv .github/ting-reader-fpk/manifest.bak .github/ting-reader-fpk/manifest
 
       - name: Build FPK (Beta)
@@ -153,12 +228,11 @@ jobs:
 
       - name: Extract Release Notes
         id: extract_notes
-        if: github.ref == 'refs/heads/main' && steps.check_release.outputs.exists != 'true'
+        if: github.ref == 'refs/heads/main' && needs.prepare.outputs.release_exists != 'true'
         run: |
-          VERSION="${{ env.VERSION }}"
+          VERSION="${{ needs.prepare.outputs.version }}"
           START_LINE=$(grep -n "## \[$VERSION\]" CHANGELOG.md | cut -d: -f1)
           if [ -n "$START_LINE" ]; then
-            # Extract including the version header line
             tail -n +$START_LINE CHANGELOG.md | sed -n '1p; 2,${/## \[/q; p}' > RELEASE_NOTES.md
           else
             echo "Version $VERSION not found in CHANGELOG.md"
@@ -166,22 +240,23 @@ jobs:
           fi
 
       - name: Update Git Tag
-        if: github.ref == 'refs/heads/main' && steps.check_release.outputs.exists != 'true'
+        if: github.ref == 'refs/heads/main' && needs.prepare.outputs.release_exists != 'true'
         run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git tag -f v${{ env.VERSION }}
-          git push origin v${{ env.VERSION }} --force
+          git tag -f v$VERSION
+          git push origin v$VERSION --force
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
-        if: github.ref == 'refs/heads/main' && steps.check_release.outputs.exists != 'true'
+        if: github.ref == 'refs/heads/main' && needs.prepare.outputs.release_exists != 'true'
         with:
-          tag_name: v${{ env.VERSION }}
-          name: Release v${{ env.VERSION }}
+          tag_name: v${{ needs.prepare.outputs.version }}
+          name: Release v${{ needs.prepare.outputs.version }}
           body_path: RELEASE_NOTES.md
           fail_on_unmatched_files: false
           files: |
-            ting-reader-${{ env.VERSION }}.fpk
+            ting-reader-${{ needs.prepare.outputs.version }}.fpk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
