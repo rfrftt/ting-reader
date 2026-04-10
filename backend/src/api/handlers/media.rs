@@ -426,6 +426,166 @@ pub async fn stream_chapter(
         
         tracing::info!("处理 strm 文件: {}", url);
         
+        // Handle Transcoding Request for .strm files
+        // Some strm URLs point to formats that browsers can't play (WMA, APE, etc.)
+        // Frontend will automatically request transcoding when playback fails
+        if let Some(format) = &params.transcode {
+            tracing::info!("对 strm URL 进行转码: {} -> {}", url, format);
+            
+            let content_type = match format.as_str() {
+                "mp3" => "audio/mpeg",
+                "wav" => "audio/wav",
+                _ => return Err(TingError::InvalidRequest("Unsupported transcode format".to_string())),
+            };
+            
+            // Get FFmpeg and FFprobe paths from plugin manager
+            let ffmpeg_path = state.plugin_manager.get_ffmpeg_path().await
+                .ok_or_else(|| TingError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::NotFound, 
+                    "FFmpeg plugin binary not found"
+                )))?;
+            
+            // Get FFprobe path (should be in the same directory as FFmpeg)
+            let ffprobe_path = {
+                let ffmpeg_dir = std::path::Path::new(&ffmpeg_path).parent()
+                    .ok_or_else(|| TingError::IoError(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "Cannot determine FFmpeg directory"
+                    )))?;
+                ffmpeg_dir.join("ffprobe.exe").to_string_lossy().to_string()
+            };
+            
+            // Get duration from URL using FFprobe
+            tracing::info!("使用 FFprobe 获取音频时长...");
+            let duration_output = Command::new(&ffprobe_path)
+                .arg("-v").arg("error")
+                .arg("-show_entries").arg("format=duration")
+                .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
+                .arg(&url)
+                .output()
+                .await;
+            
+            let duration_seconds = if let Ok(output) = duration_output {
+                if output.status.success() {
+                    let duration_str = String::from_utf8_lossy(&output.stdout);
+                    duration_str.trim().parse::<f64>().ok()
+                } else {
+                    tracing::warn!("FFprobe 获取时长失败: {}", String::from_utf8_lossy(&output.stderr));
+                    None
+                }
+            } else {
+                tracing::warn!("无法运行 FFprobe");
+                None
+            };
+            
+            if let Some(dur) = duration_seconds {
+                tracing::info!("音频时长: {:.2} 秒", dur);
+                
+                // Update chapter duration in database if significantly different
+                if let Ok(Some(mut chapter_record)) = state.chapter_repo.find_by_id(&chapter_id).await {
+                    let db_duration = chapter_record.duration.unwrap_or(0);
+                    let new_duration = dur.round() as i32;
+                    if (db_duration - new_duration).abs() > 2 {
+                        tracing::info!("更新章节时长: {} -> {} 秒", db_duration, new_duration);
+                        chapter_record.duration = Some(new_duration);
+                        let _ = state.chapter_repo.update(&chapter_record).await;
+                    }
+                }
+            }
+            
+            tracing::info!("使用 FFmpeg 直接从 URL 读取: {}", ffmpeg_path);
+            
+            // Build FFmpeg command to transcode directly from URL
+            // This allows seeking support
+            let mut cmd = Command::new(&ffmpeg_path);
+            cmd.arg("-y")
+               .arg("-loglevel").arg("warning");
+            
+            // Add seek parameter if present (must be before -i for input seeking)
+            if let Some(seek_time) = &params.seek {
+                cmd.arg("-ss").arg(seek_time);
+                tracing::info!("Seek 到位置: {}", seek_time);
+            }
+            
+            // Use URL as input directly (FFmpeg will handle HTTP/HTTPS)
+            cmd.arg("-i").arg(&url);
+            
+            // Add transcoding parameters
+            if format == "mp3" {
+                cmd.arg("-acodec").arg("libmp3lame")
+                   .arg("-b:a").arg("128k")
+                   .arg("-ac").arg("2")
+                   .arg("-ar").arg("44100")
+                   .arg("-vn")
+                   .arg("-map").arg("0:a:0")
+                   .arg("-f").arg("mp3");
+            } else if format == "wav" {
+                cmd.arg("-vn")
+                   .arg("-map").arg("0:a:0")
+                   .arg("-f").arg("wav");
+            }
+            
+            cmd.arg("pipe:1");  // Output to stdout
+            
+            cmd.stdout(Stdio::piped());
+            cmd.stderr(Stdio::piped());
+            
+            tracing::info!("启动 FFmpeg 进程（直接从 URL 读取）...");
+            
+            // Spawn FFmpeg process
+            let mut child = cmd.spawn()
+                .map_err(|e| TingError::IoError(e))?;
+            
+            let stdout = child.stdout.take()
+                .ok_or_else(|| TingError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::Other, 
+                    "Failed to capture ffmpeg stdout"
+                )))?;
+            
+            let stderr = child.stderr.take();
+            
+            // Log FFmpeg errors
+            if let Some(mut stderr) = stderr {
+                tokio::spawn(async move {
+                    let mut buffer = String::new();
+                    use tokio::io::AsyncReadExt;
+                    if let Ok(_) = stderr.read_to_string(&mut buffer).await {
+                        if !buffer.is_empty() {
+                            tracing::warn!("FFmpeg stderr: {}", buffer);
+                        }
+                    }
+                });
+            }
+            
+            // Create streaming response from FFmpeg stdout
+            let stream = ReaderStream::new(stdout);
+            let body = Body::from_stream(stream);
+            
+            // Build response with duration header if available
+            if let Some(dur) = duration_seconds {
+                return Ok((
+                    StatusCode::OK,
+                    [
+                        (header::CONTENT_TYPE, content_type.to_string()),
+                        (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
+                        ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
+                        ("X-Audio-Duration".parse().unwrap(), dur.to_string()),
+                    ],
+                    body,
+                ).into_response());
+            } else {
+                return Ok((
+                    StatusCode::OK,
+                    [
+                        (header::CONTENT_TYPE, content_type.to_string()),
+                        (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
+                        ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
+                    ],
+                    body,
+                ).into_response());
+            }
+        }
+        
         // Check if URL contains authentication (username:password@)
         // If it does, we need to proxy the request to avoid CORS issues
         let has_auth = url.contains("://") && url.split("://").nth(1).map(|s| s.contains('@')).unwrap_or(false);
@@ -561,6 +721,196 @@ pub async fn stream_chapter(
             .ok_or_else(|| TingError::IoError(std::io::Error::new(std::io::ErrorKind::NotFound, "FFmpeg plugin binary not found")))?;
         let cache_path = state.cache_manager.get_cache_path(&chapter_id);
         
+        // Check if we can use direct URL transcoding (for WebDAV or cached files)
+        let can_use_direct_url = library.library_type != "local" && !cache_path.exists();
+        
+        if can_use_direct_url {
+            // WebDAV files: Use direct URL transcoding (same as STRM)
+            // Build the WebDAV URL with authentication
+            let mut webdav_url = if chapter.path.starts_with("http://") || chapter.path.starts_with("https://") {
+                // Parse existing URL
+                url::Url::parse(&chapter.path)
+                    .map_err(|e| TingError::ValidationError(e.to_string()))?
+            } else {
+                // Construct URL from library config
+                let base_url = url::Url::parse(&library.url)
+                    .map_err(|e| TingError::ValidationError(e.to_string()))?;
+                let mut url = base_url.clone();
+                
+                let root = library.root_path.as_str();
+                let root = if root.is_empty() { "/" } else { root };
+                let root_trimmed = root.trim_matches('/');
+                let rel_trimmed = chapter.path.trim_matches('/');
+                let full_path_str = if root_trimmed.is_empty() {
+                    rel_trimmed.to_string()
+                } else {
+                    format!("{}/{}", root_trimmed, rel_trimmed)
+                };
+                
+                let decoded_path = urlencoding::decode(&full_path_str)
+                    .map_err(|e| TingError::ValidationError(e.to_string()))?;
+                
+                {
+                    let mut segments = url.path_segments_mut()
+                        .map_err(|_| TingError::ValidationError("Invalid URL".to_string()))?;
+                    for segment in decoded_path.split('/') {
+                        if !segment.is_empty() {
+                            segments.push(segment);
+                        }
+                    }
+                }
+                
+                url
+            };
+            
+            // Add authentication to URL if present
+            if let (Some(username), Some(password)) = (&library.username, &library.password) {
+                let decrypted_password = crate::core::crypto::decrypt(password, state.encryption_key.as_ref())
+                    .unwrap_or_else(|_| password.clone());
+                webdav_url.set_username(username).ok();
+                webdav_url.set_password(Some(&decrypted_password)).ok();
+            }
+            
+            let webdav_url_str = webdav_url.to_string();
+            
+            tracing::info!("使用直接 URL 转码: {}", webdav_url_str);
+            
+            // Get FFprobe path
+            let ffprobe_path = {
+                let ffmpeg_dir = std::path::Path::new(&ffmpeg_path).parent()
+                    .ok_or_else(|| TingError::IoError(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "Cannot determine FFmpeg directory"
+                    )))?;
+                ffmpeg_dir.join("ffprobe.exe").to_string_lossy().to_string()
+            };
+            
+            // Get duration using FFprobe
+            let duration_output = Command::new(&ffprobe_path)
+                .arg("-v").arg("error")
+                .arg("-show_entries").arg("format=duration")
+                .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
+                .arg(&webdav_url_str)
+                .output()
+                .await;
+            
+            let duration_seconds = if let Ok(output) = duration_output {
+                if output.status.success() {
+                    let duration_str = String::from_utf8_lossy(&output.stdout);
+                    duration_str.trim().parse::<f64>().ok()
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            
+            if let Some(dur) = duration_seconds {
+                tracing::info!("音频时长: {:.2} 秒", dur);
+                
+                // Update chapter duration in database if significantly different
+                if let Ok(Some(mut chapter_record)) = state.chapter_repo.find_by_id(&chapter_id).await {
+                    let db_duration = chapter_record.duration.unwrap_or(0);
+                    let new_duration = dur.round() as i32;
+                    if (db_duration - new_duration).abs() > 2 {
+                        tracing::info!("更新章节时长: {} -> {} 秒", db_duration, new_duration);
+                        chapter_record.duration = Some(new_duration);
+                        let _ = state.chapter_repo.update(&chapter_record).await;
+                    }
+                }
+            }
+            
+            // Build FFmpeg command to transcode directly from URL
+            let mut cmd = Command::new(&ffmpeg_path);
+            cmd.arg("-y")
+               .arg("-loglevel").arg("warning");
+            
+            // Add seek parameter if present (must be before -i for input seeking)
+            if let Some(seek_time) = &params.seek {
+                cmd.arg("-ss").arg(seek_time);
+                tracing::info!("Seek 到位置: {}", seek_time);
+            }
+            
+            // Use URL as input directly (FFmpeg will handle HTTP/HTTPS)
+            cmd.arg("-i").arg(&webdav_url_str);
+            
+            // Add transcoding parameters
+            if format == "mp3" {
+                cmd.arg("-acodec").arg("libmp3lame")
+                   .arg("-b:a").arg("128k")
+                   .arg("-ac").arg("2")
+                   .arg("-ar").arg("44100")
+                   .arg("-vn")
+                   .arg("-map").arg("0:a:0")
+                   .arg("-f").arg("mp3");
+            } else if format == "wav" {
+                cmd.arg("-vn")
+                   .arg("-map").arg("0:a:0")
+                   .arg("-f").arg("wav");
+            }
+            
+            cmd.arg("pipe:1");  // Output to stdout
+            
+            cmd.stdout(Stdio::piped());
+            cmd.stderr(Stdio::piped());
+            
+            tracing::info!("启动 FFmpeg 进程（直接从 URL 读取）...");
+            
+            // Spawn FFmpeg process
+            let mut child = cmd.spawn()
+                .map_err(|e| TingError::IoError(e))?;
+            
+            let stdout = child.stdout.take()
+                .ok_or_else(|| TingError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::Other, 
+                    "Failed to capture ffmpeg stdout"
+                )))?;
+            
+            let stderr = child.stderr.take();
+            
+            // Log FFmpeg errors
+            if let Some(mut stderr) = stderr {
+                tokio::spawn(async move {
+                    let mut buffer = String::new();
+                    use tokio::io::AsyncReadExt;
+                    if let Ok(_) = stderr.read_to_string(&mut buffer).await {
+                        if !buffer.is_empty() {
+                            tracing::warn!("FFmpeg stderr: {}", buffer);
+                        }
+                    }
+                });
+            }
+            
+            // Create streaming response from FFmpeg stdout
+            let stream = ReaderStream::new(stdout);
+            let body = Body::from_stream(stream);
+            
+            // Build response with duration header if available
+            if let Some(dur) = duration_seconds {
+                return Ok((
+                    StatusCode::OK,
+                    [
+                        (header::CONTENT_TYPE, content_type.to_string()),
+                        (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
+                        ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
+                        ("X-Audio-Duration".parse().unwrap(), dur.to_string()),
+                    ],
+                    body,
+                ).into_response());
+            } else {
+                return Ok((
+                    StatusCode::OK,
+                    [
+                        (header::CONTENT_TYPE, content_type.to_string()),
+                        (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
+                        ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
+                    ],
+                    body,
+                ).into_response());
+            }
+        }
+        
+        // Fallback: Use plugin or pipe-based transcoding for local/cached files
         // 1. Try to get transcode command from plugin
         let mut plugin_command: Option<Vec<String>> = None;
         let plugin_info = state.plugin_manager.find_plugin_for_format(std::path::Path::new(&chapter.path)).await;

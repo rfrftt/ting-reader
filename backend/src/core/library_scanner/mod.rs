@@ -269,16 +269,86 @@ impl LibraryScanner {
         // Handle .strm files explicitly
         if ext == "strm" {
             // strm files are URL references, not actual audio files
-            // They should not download content for metadata extraction
-            // Instead, rely on companion metadata files (NFO/JSON) or manual input
+            // Read the URL from the file
+            let url = match tokio::fs::read_to_string(path).await {
+                Ok(content) => content.trim().to_string(),
+                Err(e) => {
+                    tracing::error!("无法读取 strm 文件 {}: {}", path.display(), e);
+                    let t = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                    return (String::new(), t, None, None, None, 0);
+                }
+            };
             
-            // Use filename as title, duration 0 (will be updated on first play)
+            if url.is_empty() || !url.starts_with("http") {
+                tracing::warn!("strm 文件 {} 包含无效的 URL: {}", path.display(), url);
+                let t = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                return (String::new(), t, None, None, None, 0);
+            }
+            
             let t = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
             
-            tracing::info!("检测到 strm 文件: {}, 使用文件名作为标题", t);
-            tracing::info!("提示: strm 文件的完整元数据应通过 NFO 文件或 metadata.json 提供");
+            // Try to get duration using FFprobe
+            let duration = if let Some(ffmpeg_path) = self.plugin_manager.get_ffmpeg_path().await {
+                let ffprobe_path = {
+                    let ffmpeg_dir = std::path::Path::new(&ffmpeg_path).parent();
+                    if let Some(dir) = ffmpeg_dir {
+                        let probe = dir.join("ffprobe.exe");
+                        if probe.exists() {
+                            Some(probe.to_string_lossy().to_string())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+                
+                if let Some(ffprobe) = ffprobe_path {
+                    tracing::info!("使用 FFprobe 获取 strm 文件时长: {}", url);
+                    
+                    match tokio::process::Command::new(&ffprobe)
+                        .arg("-v").arg("error")
+                        .arg("-show_entries").arg("format=duration")
+                        .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
+                        .arg(&url)
+                        .output()
+                        .await
+                    {
+                        Ok(output) if output.status.success() => {
+                            let duration_str = String::from_utf8_lossy(&output.stdout);
+                            match duration_str.trim().parse::<f64>() {
+                                Ok(dur) => {
+                                    let duration_secs = dur.round() as i32;
+                                    tracing::info!("strm 文件 {} 时长: {} 秒", t, duration_secs);
+                                    duration_secs
+                                }
+                                Err(_) => {
+                                    tracing::warn!("无法解析 FFprobe 输出: {}", duration_str);
+                                    0
+                                }
+                            }
+                        }
+                        Ok(output) => {
+                            tracing::warn!("FFprobe 获取时长失败: {}", String::from_utf8_lossy(&output.stderr));
+                            0
+                        }
+                        Err(e) => {
+                            tracing::warn!("无法运行 FFprobe: {}", e);
+                            0
+                        }
+                    }
+                } else {
+                    tracing::warn!("未找到 FFprobe，strm 文件时长将设为 0");
+                    0
+                }
+            } else {
+                tracing::warn!("未找到 FFmpeg 插件，strm 文件时长将设为 0");
+                0
+            };
             
-            return (String::new(), t, None, None, None, 0);
+            tracing::info!("检测到 strm 文件: {}, 时长: {} 秒", t, duration);
+            
+            return (String::new(), t, None, None, None, duration);
         }
 
         // Try Audio (Skip for non-standard/encrypted files as standard reader fails)

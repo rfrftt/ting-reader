@@ -1156,20 +1156,84 @@ impl LibraryScanner {
                     // 2. Fallback to standard extraction (might fail for partial files, but handles other formats/plugins)
                     // Only run if we missed key metadata or need to extract cover
                     if album.is_empty() || title.is_empty() || (extract_cover && cover_url.is_none()) {
-                         let (a, t, au, n, c, d) = self.extract_chapter_metadata(&temp_path).await;
+                         let (a, t, au, n, c, _d) = self.extract_chapter_metadata(&temp_path).await;
                          if album.is_empty() { album = a; }
                          if title.is_empty() { title = t; }
                          if author.is_none() { author = au; }
                          if narrator.is_none() { narrator = n; }
-                         if duration == 0 { duration = d; }
+                         // Don't use duration from partial file, we'll use FFprobe instead
+                         // if duration == 0 { duration = d; }
                          if cover_url.is_none() { cover_url = c; }
+                    }
+                    
+                    // 3. Use FFprobe to get accurate duration from WebDAV URL (like STRM)
+                    // This is more accurate than partial file extraction or ID3 TLEN
+                    // Always use FFprobe for duration, don't trust partial file or ID3 tag
+                    if let Some(ffmpeg_path) = self.plugin_manager.get_ffmpeg_path().await {
+                        let ffprobe_path = {
+                            let ffmpeg_dir = std::path::Path::new(&ffmpeg_path).parent();
+                            if let Some(dir) = ffmpeg_dir {
+                                let probe = dir.join("ffprobe.exe");
+                                if probe.exists() {
+                                    Some(probe.to_string_lossy().to_string())
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        };
+                        
+                        if let Some(ffprobe) = ffprobe_path {
+                            // Build WebDAV URL with authentication
+                            let webdav_url = if file_url.starts_with("http://") || file_url.starts_with("https://") {
+                                url::Url::parse(file_url).ok()
+                            } else {
+                                None
+                            };
+                            
+                            if let Some(mut url) = webdav_url {
+                                // Add authentication to URL if present
+                                if let (Some(username), Some(password)) = (&library.username, &library.password) {
+                                    let decrypted_password = crate::core::crypto::decrypt(password, key)
+                                        .unwrap_or_else(|_| password.clone());
+                                    url.set_username(username).ok();
+                                    url.set_password(Some(&decrypted_password)).ok();
+                                }
+                                
+                                let url_str = url.to_string();
+                                
+                                match tokio::process::Command::new(&ffprobe)
+                                    .arg("-v").arg("error")
+                                    .arg("-show_entries").arg("format=duration")
+                                    .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
+                                    .arg(&url_str)
+                                    .output()
+                                    .await
+                                {
+                                    Ok(output) if output.status.success() => {
+                                        let duration_str = String::from_utf8_lossy(&output.stdout);
+                                        if let Ok(dur) = duration_str.trim().parse::<f64>() {
+                                            duration = dur.round() as i32;
+                                            debug!("FFprobe 获取 WebDAV 文件时长: {} 秒", duration);
+                                        }
+                                    }
+                                    Ok(output) => {
+                                        debug!("FFprobe 获取 WebDAV 时长失败: {}", String::from_utf8_lossy(&output.stderr));
+                                    }
+                                    Err(e) => {
+                                        debug!("无法运行 FFprobe: {}", e);
+                                    }
+                                }
+                            }
+                        }
                     }
                     
                     if !extract_cover {
                         cover_url = None;
                     }
 
-                    // Manually extract ID3 cover here since we have the temp file
+                    // Manually extract cover here since we have the temp file
                     let mut final_cover_url = cover_url;
                     
                     if extract_cover && final_cover_url.is_none() {
@@ -1205,38 +1269,69 @@ impl LibraryScanner {
                          
                          // Only extract if we didn't find an existing cover
                          if final_cover_url.is_none() {
-                             // Try to read from ID3 tag
-                             if let Ok(tag) = id3::Tag::read_from_path(&temp_path) {
-                                 if let Some(picture) = tag.pictures().next() {
-                                     let ext = match picture.mime_type.as_str() {
-                                         "image/png" => "png",
-                                         "image/webp" => "webp",
-                                         "image/gif" => "gif",
-                                         _ => "jpg",
-                                     };
-                                     
-                                     let target_path = if use_hash_name {
-                                         // Generate hash from parent URL
-                                         let parent_url = if let Some(idx) = file_url.rfind('/') {
-                                             &file_url[..idx]
-                                         } else {
-                                             file_url
-                                         };
-                                         let mut hasher = Sha256::new();
-                                         hasher.update(parent_url.as_bytes());
-                                         let book_hash = format!("{:x}", hasher.finalize());
-                                         target_dir.join(format!("{}.{}", book_hash, ext))
-                                     } else {
-                                         target_dir.join(format!("cover.{}", ext))
-                                     };
-                                     
-                                     // Only write if not exists
-                                     if !target_path.exists() {
-                                         if std::fs::write(&target_path, &picture.data).is_ok() {
-                                             debug!("Saved WebDAV cover to {:?}", target_path);
+                             // First try plugin-based extraction (supports M4A, etc.)
+                             let ext = temp_path.extension()
+                                 .and_then(|e| e.to_str())
+                                 .unwrap_or("")
+                                 .to_lowercase();
+                             
+                             let plugins = self.plugin_manager.find_plugins_by_type(PluginType::Format).await;
+                             for plugin in plugins {
+                                 let supports_ext = plugin.supported_extensions.as_ref()
+                                     .map(|exts| exts.iter().any(|e| e.eq_ignore_ascii_case(&ext)))
+                                     .unwrap_or(false);
+                                 if !supports_ext { continue; }
+                                 
+                                 let params = serde_json::json!({ 
+                                     "file_path": temp_path.to_string_lossy(), 
+                                     "extract_cover": true 
+                                 });
+                                 
+                                 if let Ok(result) = self.plugin_manager.call_format(&plugin.id, FormatMethod::ExtractMetadata, params).await {
+                                     if let Some(c) = result.get("cover_url").and_then(|v| v.as_str()) {
+                                         if !c.trim().is_empty() {
+                                             // Plugin returned a cover path, use it
+                                             final_cover_url = Some(c.to_string());
+                                             break;
                                          }
                                      }
-                                     final_cover_url = Some(target_path.to_string_lossy().replace('\\', "/"));
+                                 }
+                             }
+                             
+                             // Fallback to ID3 extraction (for MP3)
+                             if final_cover_url.is_none() {
+                                 if let Ok(tag) = id3::Tag::read_from_path(&temp_path) {
+                                     if let Some(picture) = tag.pictures().next() {
+                                         let ext = match picture.mime_type.as_str() {
+                                             "image/png" => "png",
+                                             "image/webp" => "webp",
+                                             "image/gif" => "gif",
+                                             _ => "jpg",
+                                         };
+                                         
+                                         let target_path = if use_hash_name {
+                                             // Generate hash from parent URL
+                                             let parent_url = if let Some(idx) = file_url.rfind('/') {
+                                                 &file_url[..idx]
+                                             } else {
+                                                 file_url
+                                             };
+                                             let mut hasher = Sha256::new();
+                                             hasher.update(parent_url.as_bytes());
+                                             let book_hash = format!("{:x}", hasher.finalize());
+                                             target_dir.join(format!("{}.{}", book_hash, ext))
+                                         } else {
+                                             target_dir.join(format!("cover.{}", ext))
+                                         };
+                                         
+                                         // Only write if not exists
+                                         if !target_path.exists() {
+                                             if std::fs::write(&target_path, &picture.data).is_ok() {
+                                                 debug!("Saved WebDAV cover from ID3 to {:?}", target_path);
+                                             }
+                                         }
+                                         final_cover_url = Some(target_path.to_string_lossy().replace('\\', "/"));
+                                     }
                                  }
                              }
                          }
