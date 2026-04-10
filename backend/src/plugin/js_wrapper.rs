@@ -183,28 +183,34 @@ impl JavaScriptPluginWrapper {
         // Check if thread spawn failed
         thread_result.map_err(|e| TingError::PluginLoadError(format!("Failed to spawn thread: {}", e)))?;
         
-        // Wait briefly to check for early initialization errors
+        // Wait for early initialization errors (increased timeout for slow machines)
+        // This gives slow machines enough time to detect initialization failures
+        // before we assume success
+        info!("Waiting 3s to check for early initialization errors for {}", plugin_id);
         let init_check = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(3000));  // Increased from 200ms to 3s
             error_rx.try_recv()
         });
         
-        // Block on the check (this is acceptable since it's very short)
+        // Block on the check (this is acceptable since it's only 3 seconds)
         match init_check.join() {
             Ok(recv_result) => {
                 match recv_result {
                     Ok(err_msg) => {
                         // Early error detected
+                        error!("JS plugin {} failed early initialization check: {}", plugin_id, err_msg);
                         return Err(TingError::PluginLoadError(format!("Plugin initialization failed: {}", err_msg)));
                     }
                     Err(_) => {
                         // Channel closed without error = success
-                        info!("JS plugin {} initialized successfully", plugin_id);
+                        info!("JS plugin {} passed early initialization check (3s)", plugin_id);
+                        info!("Note: Plugin is still initializing in background, full initialization may take up to 30s");
                     }
                 }
             }
             Err(_) => {
                 // Join failed
+                error!("JS plugin {} init check thread panicked", plugin_id);
                 return Err(TingError::PluginLoadError("Init check thread panicked".to_string()));
             }
         }

@@ -9,6 +9,11 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize V8 Platform before creating any JsRuntime
+    // This must be called once at program startup to avoid race conditions
+    // when multiple threads create JsRuntime instances concurrently
+    deno_core::JsRuntime::init_platform(None);
+    
     // Load configuration (handles CLI args, env vars, and config file)
     let config = match core::config::Config::load() {
         Ok(cfg) => cfg,
