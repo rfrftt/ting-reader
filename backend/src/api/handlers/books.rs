@@ -729,8 +729,20 @@ pub async fn update_chapter(
 }
 
 /// Handler for GET /api/v1/tags - Get all unique tags
-pub async fn get_tags(State(state): State<AppState>) -> Result<impl IntoResponse> {
-    let books = state.book_repo.find_all().await?;
+pub async fn get_tags(
+    State(state): State<AppState>,
+    user: crate::auth::middleware::AuthUser,
+) -> Result<impl IntoResponse> {
+    let is_admin = user.role == "admin";
+    
+    // Use find_with_filters to respect user permissions
+    let books = state.book_repo.find_with_filters(
+        &user.id,
+        is_admin,
+        None,  // search
+        None,  // tag
+        None   // library_id
+    ).await?;
 
     let mut tags_set = std::collections::HashSet::new();
     for book in books {
