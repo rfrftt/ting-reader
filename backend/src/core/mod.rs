@@ -27,6 +27,7 @@ pub mod color;
 pub mod storage;
 pub mod merge_service;
 pub mod metadata_writer;
+pub mod webdav_client;
 
 pub mod utils;
 
@@ -43,4 +44,5 @@ pub use nfo_manager::{NfoManager, BookMetadata, ChapterMetadata};
 pub use library_scanner::{LibraryScanner, ScanResult};
 pub use storage::StorageService;
 pub use merge_service::MergeService;
+pub use webdav_client::WebDavClient;
 pub use utils::release_memory;

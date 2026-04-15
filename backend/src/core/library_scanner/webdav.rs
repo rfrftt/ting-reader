@@ -252,7 +252,12 @@ impl LibraryScanner {
         queue.push_back(root_url.clone());
         visited_dirs.insert(root_url);
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| TingError::NetworkError(e.to_string()))?;
+            
         let username = library.username.as_deref();
         
         // Decrypt password
@@ -272,6 +277,8 @@ impl LibraryScanner {
         // Limit depth/count to prevent infinite loops
         let mut processed_dirs = 0;
         let max_dirs = 1000;
+        let mut last_request_time = std::time::Instant::now();
+        let min_request_interval = std::time::Duration::from_millis(200); // 200ms between requests
 
         while let Some(current_url) = queue.pop_front() {
             // Check cancellation
@@ -282,15 +289,28 @@ impl LibraryScanner {
                 break;
             }
             processed_dirs += 1;
+            
+            // Rate limiting: ensure minimum interval between requests
+            let elapsed = last_request_time.elapsed();
+            if elapsed < min_request_interval {
+                let sleep_time = min_request_interval - elapsed;
+                tokio::time::sleep(sleep_time).await;
+            }
 
-            // PROPFIND request
+            // PROPFIND request with browser-like headers
             let mut req = client.request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &current_url)
-                .header("Depth", "1");
+                .header("Depth", "1")
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+                .header("Accept-Encoding", "gzip, deflate, br")
+                .header("Connection", "keep-alive");
             
             if let (Some(u), Some(p)) = (username, &password) {
                 req = req.basic_auth(u, Some(p));
             }
 
+            last_request_time = std::time::Instant::now();
+            
             match req.send().await {
                 Ok(res) => {
                     if res.status().is_success() || res.status().as_u16() == 207 {
@@ -1228,25 +1248,48 @@ impl LibraryScanner {
                          if cover_url.is_none() { cover_url = c; }
                     }
                     
-                    // 3. Use FFprobe to get accurate duration from WebDAV URL (like STRM)
-                    // This is more accurate than partial file extraction or ID3 TLEN
-                    // Always use FFprobe for duration, don't trust partial file or ID3 tag
-                    if let Some(ffmpeg_path) = self.plugin_manager.get_ffmpeg_path().await {
-                        let ffprobe_path = {
-                            let ffmpeg_dir = std::path::Path::new(&ffmpeg_path).parent();
-                            if let Some(dir) = ffmpeg_dir {
-                                let probe = dir.join("ffprobe.exe");
-                                if probe.exists() {
-                                    Some(probe.to_string_lossy().to_string())
+                    // 3. Smart duration strategy for WebDAV files
+                    // For MP3: prefer ID3, for others: compare ID3 with estimation
+                    let ext = file_url.split('.').last().unwrap_or("").to_lowercase();
+                    let mut use_ffprobe = false;
+                    
+                    if ext == "mp3" {
+                        // MP3: use ID3 if available, otherwise FFprobe
+                        if duration == 0 {
+                            use_ffprobe = true;
+                        }
+                    } else {
+                        // Other formats: check if ID3 duration seems reasonable
+                        if duration > 0 {
+                            // Estimate duration based on file size (if available from WebDAV)
+                            // For now, trust ID3 if present, but we could add size-based validation here
+                            tracing::debug!("使用 ID3 时长 {} 秒 for WebDAV file: {}", duration, file_url);
+                        } else {
+                            use_ffprobe = true;
+                        }
+                    }
+                    
+                    // Use FFprobe when needed (fallback or validation)
+                    if use_ffprobe {
+                        if let Some(ffmpeg_path) = self.plugin_manager.get_ffmpeg_path().await {
+                            let ffprobe_path = {
+                                let ffmpeg_dir = std::path::Path::new(&ffmpeg_path).parent();
+                                if let Some(dir) = ffmpeg_dir {
+                                    let probe = dir.join("ffprobe.exe");
+                                    if probe.exists() {
+                                        Some(probe.to_string_lossy().to_string())
+                                    } else {
+                                        None
+                                    }
                                 } else {
                                     None
                                 }
-                            } else {
-                                None
-                            }
-                        };
+                            };
                         
                         if let Some(ffprobe) = ffprobe_path {
+                            // Add small delay before FFprobe to avoid overwhelming the server
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            
                             // Build WebDAV URL with authentication
                             let webdav_url = if file_url.starts_with("http://") || file_url.starts_with("https://") {
                                 url::Url::parse(file_url).ok()
@@ -1277,7 +1320,7 @@ impl LibraryScanner {
                                         let duration_str = String::from_utf8_lossy(&output.stdout);
                                         if let Ok(dur) = duration_str.trim().parse::<f64>() {
                                             duration = dur.round() as i32;
-                                            debug!("FFprobe 获取 WebDAV 文件时长: {} 秒", duration);
+                                            debug!("FFprobe 获取 WebDAV 文件时长: {} 秒 ({})", duration, ext);
                                         }
                                     }
                                     Ok(output) => {
@@ -1289,6 +1332,7 @@ impl LibraryScanner {
                                 }
                             }
                         }
+                    }
                     }
                     
                     if !extract_cover {

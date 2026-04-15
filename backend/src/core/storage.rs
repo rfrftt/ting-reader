@@ -15,8 +15,14 @@ pub struct StorageService {
 
 impl StorageService {
     pub fn new() -> Self {
+        let client = Client::builder()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+            
         Self {
-            client: Client::new(),
+            client,
         }
     }
 
@@ -92,6 +98,12 @@ impl StorageService {
         }
 
         let mut req = self.client.get(url.clone());
+        
+        // Add browser-like headers
+        req = req.header("Accept", "*/*")
+            .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+            .header("Accept-Encoding", "gzip, deflate, br")
+            .header("Connection", "keep-alive");
         
         if let (Some(u), Some(p)) = (&library.username, &library.password) {
             match crate::core::crypto::decrypt(p, decryption_key) {

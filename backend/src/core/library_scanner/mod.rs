@@ -306,6 +306,9 @@ impl LibraryScanner {
                 if let Some(ffprobe) = ffprobe_path {
                     tracing::info!("使用 FFprobe 获取 strm 文件时长: {}", url);
                     
+                    // Add small delay to avoid overwhelming the server
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    
                     match tokio::process::Command::new(&ffprobe)
                         .arg("-v").arg("error")
                         .arg("-show_entries").arg("format=duration")
@@ -351,34 +354,77 @@ impl LibraryScanner {
             return (String::new(), t, None, None, None, duration);
         }
 
+        // Smart duration extraction strategy
+        let mut duration = 0i32;
+        let file_size = tokio::fs::metadata(path).await
+            .map(|m| m.len())
+            .unwrap_or(0);
+        
         // Try Audio (Skip for non-standard/encrypted files as standard reader fails)
         if is_standard {
-            if let Ok(meta) = self.audio_streamer.read_metadata(path) {
-                 let t = meta.title.unwrap_or_default();
-                 let album = meta.album.unwrap_or_default();
-                 let d = meta.duration.as_secs() as i32;
+            // MP3 files: prioritize ID3 tags
+            if ext == "mp3" {
+                if let Ok(id3_duration) = self.get_id3_duration(path).await {
+                    duration = id3_duration;
+                    tracing::debug!("使用 ID3 获取 MP3 时长: {} 秒", duration);
+                } else if let Ok(meta) = self.audio_streamer.read_metadata(path) {
+                    duration = meta.duration.as_secs() as i32;
+                    tracing::debug!("使用 Symphonia 获取 MP3 时长: {} 秒", duration);
+                }
+            } else {
+                // Other formats: compare ID3 with file size estimation
+                let id3_duration = self.get_id3_duration(path).await.unwrap_or(0);
+                let estimated_duration = self.estimate_duration_by_size(file_size, &ext);
+                
+                if id3_duration > 0 && estimated_duration > 0 {
+                    let diff_ratio = (id3_duration as f64 - estimated_duration as f64).abs() / estimated_duration as f64;
+                    if diff_ratio < 0.15 {  // 差距小于15%，信任ID3
+                        duration = id3_duration;
+                        tracing::debug!("使用 ID3 获取 {} 时长: {} 秒 (估算: {} 秒, 差距: {:.1}%)", 
+                                      ext, duration, estimated_duration, diff_ratio * 100.0);
+                    } else {
+                        tracing::debug!("ID3 时长差距过大 (ID3: {} 秒, 估算: {} 秒, 差距: {:.1}%), 将使用 FFprobe", 
+                                      id3_duration, estimated_duration, diff_ratio * 100.0);
+                    }
+                }
+                
+                // If ID3 is unreliable or missing, use Symphonia as fallback
+                if duration == 0 {
+                    if let Ok(meta) = self.audio_streamer.read_metadata(path) {
+                        duration = meta.duration.as_secs() as i32;
+                        tracing::debug!("使用 Symphonia 获取 {} 时长: {} 秒", ext, duration);
+                    }
+                }
+            }
+            
+            if duration > 0 {
+                if let Ok(meta) = self.audio_streamer.read_metadata(path) {
+                    let t = meta.title.unwrap_or_default();
+                    let album = meta.album.unwrap_or_default();
+                    let d = duration;
                  
-                 // Standard metadata extraction for author/narrator
-                 let mut author = meta.album_artist;
-                 let mut narrator = None;
+                    // Standard metadata extraction for author/narrator
+                    let mut author = meta.album_artist;
+                    let mut narrator = None;
                  
-                 if let Some(a) = meta.artist {
-                     if !a.trim().is_empty() {
-                         if author.is_none() {
-                             author = Some(a.clone());
-                         } else if author.as_ref() != Some(&a) {
-                             narrator = Some(a);
-                         }
-                     }
-                 }
+                    if let Some(a) = meta.artist {
+                        if !a.trim().is_empty() {
+                            if author.is_none() {
+                                author = Some(a.clone());
+                            } else if author.as_ref() != Some(&a) {
+                                narrator = Some(a);
+                            }
+                        }
+                    }
                  
-                 if let Some(c) = meta.composer {
-                     if !c.trim().is_empty() && narrator.is_none() {
-                         narrator = Some(c);
-                     }
-                 }
+                    if let Some(c) = meta.composer {
+                        if !c.trim().is_empty() && narrator.is_none() {
+                            narrator = Some(c);
+                        }
+                    }
 
-                 return (album, t, author, narrator, None, d);
+                    return (album, t, author, narrator, None, d);
+                }
             }
         }
         
@@ -446,6 +492,42 @@ impl LibraryScanner {
         }
 
         (String::new(), String::new(), None, None, None, 0)
+    }
+
+    /// Get ID3 duration from audio file
+    async fn get_id3_duration(&self, path: &Path) -> Result<i32> {
+        use id3::TagLike;
+        
+        let tag = id3::Tag::read_from_path(path)
+            .map_err(|e| TingError::InvalidRequest(format!("Failed to read ID3 tag: {}", e)))?;
+        if let Some(duration_ms) = tag.duration() {
+            Ok((duration_ms / 1000) as i32)
+        } else {
+            Err(TingError::InvalidRequest("No duration in ID3 tag".to_string()))
+        }
+    }
+    
+    /// Estimate duration based on file size and format
+    fn estimate_duration_by_size(&self, file_size: u64, ext: &str) -> i32 {
+        if file_size == 0 {
+            return 0;
+        }
+        
+        // Rough bitrate estimates for different formats (in kbps)
+        let estimated_bitrate = match ext {
+            "mp3" => 128,      // Common MP3 bitrate
+            "m4a" | "aac" => 96,  // AAC is more efficient
+            "flac" => 800,     // Lossless, much higher bitrate
+            "ogg" | "opus" => 96,  // Similar to AAC
+            "wma" => 128,      // Similar to MP3
+            _ => 128,          // Default fallback
+        };
+        
+        // Calculate estimated duration: file_size_bits / bitrate_bps
+        let file_size_bits = file_size * 8;
+        let bitrate_bps = estimated_bitrate * 1000;
+        
+        (file_size_bits / bitrate_bps as u64) as i32
     }
 
 }

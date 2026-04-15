@@ -457,6 +457,10 @@ pub async fn stream_chapter(
             
             // Get duration from URL using FFprobe
             tracing::info!("使用 FFprobe 获取音频时长...");
+            
+            // Add delay to avoid overwhelming the server
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            
             let duration_output = Command::new(&ffprobe_path)
                 .arg("-v").arg("error")
                 .arg("-show_entries").arg("format=duration")
@@ -596,9 +600,17 @@ pub async fn stream_chapter(
             
             let range_header = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
             
-            // Build request with authentication
-            let client = reqwest::Client::new();
-            let mut req = client.get(&url);
+            // Build request with authentication and browser-like headers
+            let client = reqwest::Client::builder()
+                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
+            let mut req = client.get(&url)
+                .header("Accept", "*/*")
+                .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+                .header("Accept-Encoding", "gzip, deflate, br")
+                .header("Connection", "keep-alive");
             
             // Forward range header if present (use string literal to avoid type conflicts)
             if let Some(range) = range_header {
@@ -786,6 +798,10 @@ pub async fn stream_chapter(
             };
             
             // Get duration using FFprobe
+            
+            // Add delay to avoid overwhelming the server
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            
             let duration_output = Command::new(&ffprobe_path)
                 .arg("-v").arg("error")
                 .arg("-show_entries").arg("format=duration")
