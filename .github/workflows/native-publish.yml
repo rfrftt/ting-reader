@@ -151,17 +151,15 @@ jobs:
             echo "Building for Formal release v$VERSION..."
             OUTPUT_NAME="ting-reader-native-${{ matrix.fpk_suffix }}-${VERSION}.fpk"
           fi
-          
-          # Update manifest with version
-          sed -i "s/^version[[:space:]]*=.*/version = $VERSION/" .github/ting-reader-fpk-native/manifest
-          
-          # Update arch/platform in manifest
-          # Remove existing arch/platform lines to avoid duplication
+          # 删除可能已存在的 arch/platform 行
           sed -i "/^arch[[:space:]]*=/d" .github/ting-reader-fpk-native/manifest
           sed -i "/^platform[[:space:]]*=/d" .github/ting-reader-fpk-native/manifest
-          
-          # Add new platform config
-          echo "platform = ${{ matrix.arch }}" >> .github/ting-reader-fpk-native/manifest
+
+          # 确保文件末尾有换行，避免追加到行尾
+          sed -i -e '$a\' .github/ting-reader-fpk-native/manifest
+
+          # 在 version 行之后插入 platform 行
+          sed -i "/^version[[:space:]]*=/a platform = ${{ matrix.arch }}" .github/ting-reader-fpk-native/manifest
           
           fnpack build --directory .github/ting-reader-fpk-native
           mv ting-reader.fpk "$OUTPUT_NAME"
