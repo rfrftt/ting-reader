@@ -384,7 +384,7 @@ const SettingsPage: React.FC = () => {
             <div className="flex items-center justify-between gap-4">
               <div className="flex-1 min-w-0">
                 <p className="font-bold dark:text-white truncate">自动预加载下一章</p>
-                <p className="text-xs md:text-sm text-slate-500 line-clamp-2">播放当前章节时，后台自动解密并缓冲下一章节</p>
+                <p className="text-xs md:text-sm text-slate-500 line-clamp-2">播放当前章节时，后台自动缓冲下一章节</p>
               </div>
               <button
                 onClick={() => handleSave({ ...settings, autoPreload: !settings.autoPreload })}

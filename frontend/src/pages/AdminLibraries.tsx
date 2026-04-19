@@ -807,7 +807,7 @@ const AdminLibraries: React.FC = () => {
                 ) : (
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <label className="text-sm font-bold text-slate-600 dark:text-slate-400">选择本地路径 (相对项目 storage/ 目录)</label>
+                      <label className="text-sm font-bold text-slate-600 dark:text-slate-400">选择本地路径 (相对 storage/ 目录)</label>
                       <div className="relative">
                         {/* Selector Trigger */}
                         <button
@@ -910,9 +910,6 @@ const AdminLibraries: React.FC = () => {
                           </div>
                         )}
                       </div>
-                      <p className="text-[11px] text-slate-400 pl-1">
-                        提示：音频文件必须放置在后端 <strong>backend/storage/</strong> 目录下
-                      </p>
                     </div>
                   </div>
                 )}
