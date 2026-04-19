@@ -31,8 +31,7 @@ max_file_size = 10485760  # 10 MB
 max_backups = 5
 
 [security]
-# API 认证配置（Bearer Token）
-enable_auth = false  # 是否启用 API 认证
+enable_auth = false
 api_key = ""
 allowed_origins = ["*"]
 rate_limit_requests = 100
