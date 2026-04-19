@@ -1,6 +1,6 @@
 [package]
 name = "ting_reader"
-version = "1.3.4"
+version = "1.3.3"
 edition = "2021"
 rust-version = "1.70"
 
@@ -63,6 +63,7 @@ semver = { version = "1.0", features = ["serde"] }
 regex = "1.10"
 url = "2.5"
 lazy_static = "1.4.0"
+hostname = "0.4"
 
 # Configuration Validation
 jsonschema = "0.17"
@@ -93,6 +94,7 @@ sha2 = "0.10"
 # Authentication
 bcrypt = "0.15"
 jsonwebtoken = "9.2"
+rand = "0.8"
 futures = "0.3.31"
 zip = "1.1.4"
 image = { version = "0.25.6", default-features = false, features = ["jpeg", "png", "webp"] }
