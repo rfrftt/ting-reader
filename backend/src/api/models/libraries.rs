@@ -108,6 +108,7 @@ pub struct TestWebDavRequest {
     pub url: String,
     pub username: Option<String>,
     pub password: Option<String>,
+    pub root_path: Option<String>,
 }
 
 /// Response for testing WebDAV connection

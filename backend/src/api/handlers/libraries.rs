@@ -489,6 +489,25 @@ pub async fn test_webdav_connection(
         }));
     }
 
+    // 拼接 URL 和 root_path
+    let test_url = if let Some(root_path) = &req.root_path {
+        let root_path = root_path.trim();
+        if !root_path.is_empty() && root_path != "/" {
+            // 确保 URL 末尾没有斜杠，root_path 开头有斜杠
+            let base_url = req.url.trim_end_matches('/');
+            let path = if root_path.starts_with('/') {
+                root_path.to_string()
+            } else {
+                format!("/{}", root_path)
+            };
+            format!("{}{}", base_url, path)
+        } else {
+            req.url.clone()
+        }
+    } else {
+        req.url.clone()
+    };
+
     let client = match reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .timeout(std::time::Duration::from_secs(10))
@@ -497,39 +516,69 @@ pub async fn test_webdav_connection(
             Err(e) => return Err(TingError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e))),
         };
 
-    let mut request = client.request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &req.url)
-        .header("Depth", "0");
+    // 尝试多种方法以兼容不同的 WebDAV 实现（如 Alist）
+    let methods = vec![
+        ("PROPFIND", Some("0")), // 标准 WebDAV 方法
+        ("OPTIONS", None),        // 备用方法 1
+        ("HEAD", None),           // 备用方法 2
+    ];
 
-    if let Some(username) = req.username {
-        if !username.is_empty() {
-             request = request.basic_auth(username, req.password);
+    let mut last_error = String::new();
+    
+    for (method_name, depth_header) in methods {
+        let mut request = client.request(
+            reqwest::Method::from_bytes(method_name.as_bytes()).unwrap(), 
+            &test_url
+        );
+
+        if let Some(depth) = depth_header {
+            request = request.header("Depth", depth);
         }
-    }
 
-    match request.send().await {
-        Ok(res) => {
-            if res.status().is_success() || res.status().as_u16() == 207 {
-                Ok(Json(TestWebDavResponse {
-                    success: true,
-                    message: "连接成功".to_string(),
-                }))
-            } else if res.status().as_u16() == 401 {
-                Ok(Json(TestWebDavResponse {
-                    success: false,
-                    message: "连接失败: 认证失败 (401 Unauthorized)".to_string(),
-                }))
-            } else {
-                Ok(Json(TestWebDavResponse {
-                    success: false,
-                    message: format!("连接失败: HTTP {}", res.status()),
-                }))
+        if let Some(ref username) = req.username {
+            if !username.is_empty() {
+                request = request.basic_auth(username, req.password.as_ref());
             }
-        },
-        Err(e) => {
-            Ok(Json(TestWebDavResponse {
-                success: false,
-                message: format!("连接失败: {}", e),
-            }))
+        }
+
+        match request.send().await {
+            Ok(res) => {
+                let status = res.status().as_u16();
+                
+                // 成功的状态码
+                if res.status().is_success() || status == 207 {
+                    return Ok(Json(TestWebDavResponse {
+                        success: true,
+                        message: format!("连接成功 (使用 {} 方法)", method_name),
+                    }));
+                }
+                
+                // 认证失败
+                if status == 401 {
+                    return Ok(Json(TestWebDavResponse {
+                        success: false,
+                        message: "连接失败: 认证失败 (401 Unauthorized)".to_string(),
+                    }));
+                }
+                
+                // 405 表示方法不支持，尝试下一个方法
+                if status == 405 {
+                    last_error = format!("{} 方法不支持 (HTTP 405)", method_name);
+                    continue;
+                }
+                
+                // 其他错误
+                last_error = format!("HTTP {} (使用 {} 方法)", status, method_name);
+            },
+            Err(e) => {
+                last_error = format!("{} (使用 {} 方法)", e, method_name);
+            }
         }
     }
+
+    // 所有方法都失败
+    Ok(Json(TestWebDavResponse {
+        success: false,
+        message: format!("连接失败: {}", last_error),
+    }))
 }
